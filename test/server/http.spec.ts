@@ -110,3 +110,27 @@ describe('未知路径', () => {
     expect(res.status).toBe(404)
   })
 })
+
+describe('GET /api/v1/sessions/search（M44）', async () => {
+  const { createApp } = await import('#/server/app.js')
+  const { fileURLToPath } = await import('node:url')
+  const FIXTURES = fileURLToPath(new URL('../fixtures/sessions', import.meta.url))
+
+  it('search 路由不被 /sessions/:id 吃掉，q 过短拒绝', async () => {
+    const app = createApp({ projectsRoot: FIXTURES })
+    const res = await app.request('/api/v1/sessions/search?q=x')
+    const body = (await res.json()) as { code: number }
+    expect(body.code).toBe(40001)
+  })
+
+  it('全文命中返回 hits（session_id + snippet）', async () => {
+    const app = createApp({ projectsRoot: FIXTURES })
+    const res = await app.request('/api/v1/sessions/search?q=%E4%BD%A0%E5%A5%BD')
+    const body = (await res.json()) as {
+      code: number
+      data: { hits: { session_id: string; snippet: string }[] }
+    }
+    expect(body.code).toBe(0)
+    expect(Array.isArray(body.data.hits)).toBe(true)
+  })
+})

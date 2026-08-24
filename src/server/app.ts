@@ -15,6 +15,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { expandHome } from '#/sessions/slug.js'
 import { listSessions } from '#/sessions/list.js'
+import { searchSessions } from '#/sessions/search.js'
 import { findSessionFile } from '#/sessions/find.js'
 import { parseSessionFile } from '#/sessions/parse.js'
 import { aggregateSessionUsage } from '#/usage/aggregate.js'
@@ -211,6 +212,19 @@ export function createApp(deps: AppDeps) {
   app.get('/api/v1/sessions', async (c) => {
     const sessions = await listSessions(deps.projectsRoot)
     return c.json(ok({ sessions }))
+  })
+
+  /**
+   * M44：全文搜索。必须注册在 /sessions/:id 之前 —— 否则 'search'
+   * 会被吃成 :id。q 至少 2 字符（1 字符全库扫噪音太大）。
+   */
+  app.get('/api/v1/sessions/search', async (c) => {
+    const q = (c.req.query('q') ?? '').trim()
+    if (q.length < 2) return c.json(fail(40001, 'q must be at least 2 characters'))
+    const limitRaw = Number(c.req.query('limit') ?? '20')
+    const limit = Number.isInteger(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 50) : 20
+    const hits = await searchSessions(deps.projectsRoot, q, { limit })
+    return c.json(ok({ hits }))
   })
 
   /** M12：新建会话。cwd 必须是存在的目录；session id 由服务器发（--session-id）。 */

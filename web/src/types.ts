@@ -20,6 +20,16 @@ export interface HistoryMessage {
   sidechain_count?: number
 }
 
+/** 全文搜索命中（M44，server sessions/search.ts） */
+export interface SearchHit {
+  session_id: string
+  project_slug: string
+  cwd: string | null
+  snippet: string
+  match_count: number
+  mtime_ms: number
+}
+
 export type SessionState = 'idle' | 'running' | 'waiting-approval'
 
 export interface HubEvent {
