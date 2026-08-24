@@ -40,6 +40,8 @@ class FakeEngine extends EventEmitter {
       setImmediate(() => respond({ models: [{ value: 'default', displayName: 'Default' }] }))
     if (f.request.subtype === 'get_settings')
       setImmediate(() => respond({ applied: { effort: 'max', model: 'claude-opus-5[1m]' } }))
+    if (f.request.subtype === 'get_context_usage')
+      setImmediate(() => respond({ totalTokens: 19670, maxTokens: 1000000, percentage: 2 }))
   }
 }
 

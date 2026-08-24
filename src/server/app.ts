@@ -116,31 +116,44 @@ export function createApp(deps: AppDeps) {
    * 新会话，无转写秒起），拉完 list_models + get_settings 就停掉，结果
    * 进程内缓存。不发消息就不会落盘 jsonl，不留垃圾会话。
    */
-  let metaCache: { models: unknown; settings: unknown } | null = null
-  let metaInflight: Promise<{ models: unknown; settings: unknown }> | null = null
+  interface MetaInfo {
+    models: unknown
+    settings: unknown
+    /** 默认模型的 context 窗口（get_context_usage.maxTokens）—— 降级估算用 */
+    contextWindow: number | null
+  }
+  let metaCache: MetaInfo | null = null
+  let metaInflight: Promise<MetaInfo> | null = null
 
-  async function fetchMeta(registry: SessionRegistry): Promise<{ models: unknown; settings: unknown }> {
-    const id = await registry.create(homedir())
-    try {
-      const modelsPayload = (await registry.listModels(id)) as { models?: unknown } | null
-      const settings = await registry.getSettings(id).catch(() => null)
-      return { models: modelsPayload?.models ?? [], settings }
-    } finally {
-      void registry.get(id)?.stop()
+  async function ensureMeta(registry: SessionRegistry): Promise<MetaInfo> {
+    if (metaCache !== null) return metaCache
+    if (metaInflight === null) {
+      metaInflight = (async () => {
+        const id = await registry.create(homedir())
+        try {
+          const modelsPayload = (await registry.listModels(id)) as { models?: unknown } | null
+          const settings = await registry.getSettings(id).catch(() => null)
+          const ctx = (await registry.getContextUsage(id)) as { maxTokens?: number } | null
+          return {
+            models: modelsPayload?.models ?? [],
+            settings,
+            contextWindow: typeof ctx?.maxTokens === 'number' ? ctx.maxTokens : null,
+          }
+        } finally {
+          void registry.get(id)?.stop()
+        }
+      })().finally(() => {
+        metaInflight = null
+      })
     }
+    metaCache = await metaInflight
+    return metaCache
   }
 
   app.get('/api/v1/models', async (c) => {
     if (deps.registry === undefined) return c.json(fail(50001, 'registry not configured'))
-    if (metaCache !== null) return c.json(ok(metaCache))
     try {
-      if (metaInflight === null) {
-        metaInflight = fetchMeta(deps.registry).finally(() => {
-          metaInflight = null
-        })
-      }
-      metaCache = await metaInflight
-      return c.json(ok(metaCache))
+      return c.json(ok(await ensureMeta(deps.registry)))
     } catch (err) {
       return c.json(controlFail(err))
     }
@@ -406,18 +419,60 @@ export function createApp(deps: AppDeps) {
     )
   })
 
-  /** M30：context 窗口用量。只查活引擎 —— 绝不为看环 spawn 进程。 */
+  /**
+   * M30/M31：context 窗口用量。引擎活着走 get_context_usage（精确）；
+   * 引擎不在（打开历史会话）降级为 jsonl 末轮 usage 估算，窗口大小取
+   * 元数据引擎的 maxTokens（默认模型的真实窗口），标注 estimated。
+   * 会话级路由不为看环 spawn 进程（元数据引擎全服务器只此一个）。
+   */
   app.get('/api/v1/sessions/:id/context', async (c) => {
     const id = c.req.param('id')
-    if (deps.registry?.get(id) === undefined) return c.json(ok(null))
-    const payload = await deps.registry.getContextUsage(id)
-    if (typeof payload !== 'object' || payload === null) return c.json(ok(null))
-    const p = payload as Record<string, unknown>
+    if (deps.registry === undefined) return c.json(ok(null))
+    if (deps.registry.get(id) !== undefined) {
+      const payload = await deps.registry.getContextUsage(id)
+      if (typeof payload === 'object' && payload !== null) {
+        const p = payload as Record<string, unknown>
+        return c.json(
+          ok({
+            total_tokens: p.totalTokens ?? null,
+            max_tokens: p.maxTokens ?? null,
+            percentage: p.percentage ?? null,
+            estimated: false,
+          }),
+        )
+      }
+      return c.json(ok(null))
+    }
+    // 降级：jsonl 末轮 usage（上一轮结束时在窗口里的量 ≈ input+cache+output）
+    const file = await findSessionFile(deps.projectsRoot, id)
+    if (file === null) return c.json(ok(null))
+    const parsed = await parseSessionFile(file)
+    let tokens: number | null = null
+    for (let i = parsed.mainline.length - 1; i >= 0; i--) {
+      const u = parsed.mainline[i]!.usage
+      if (u !== null) {
+        tokens =
+          (u.input_tokens ?? 0) +
+          (u.output_tokens ?? 0) +
+          (u.cache_creation_input_tokens ?? 0) +
+          (u.cache_read_input_tokens ?? 0)
+        break
+      }
+    }
+    if (tokens === null) return c.json(ok(null))
+    let window: number | null = null
+    try {
+      window = (await ensureMeta(deps.registry)).contextWindow
+    } catch {
+      window = null
+    }
+    if (window === null || window <= 0) return c.json(ok(null))
     return c.json(
       ok({
-        total_tokens: p.totalTokens ?? null,
-        max_tokens: p.maxTokens ?? null,
-        percentage: p.percentage ?? null,
+        total_tokens: tokens,
+        max_tokens: window,
+        percentage: (tokens / window) * 100,
+        estimated: true,
       }),
     )
   })

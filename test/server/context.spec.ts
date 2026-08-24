@@ -4,7 +4,7 @@
  */
 import { describe, it, expect } from 'vitest'
 import { EventEmitter } from 'node:events'
-import { mkdtempSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createApp } from '#/server/app.js'
@@ -32,6 +32,8 @@ class FakeEngine extends EventEmitter {
     if (f.request.subtype === 'initialize') setImmediate(() => respond({}))
     if (f.request.subtype === 'get_context_usage')
       setImmediate(() => respond({ totalTokens: 201000, maxTokens: 1000000, percentage: 20, categories: [] }))
+    if (f.request.subtype === 'list_models') setImmediate(() => respond({ models: [] }))
+    if (f.request.subtype === 'get_settings') setImmediate(() => respond({ applied: {} }))
   }
 }
 
@@ -45,8 +47,9 @@ function setup() {
       return e
     },
   })
-  const app = createApp({ projectsRoot: mkdtempSync(join(tmpdir(), 'cc-web-ctx-')), registry })
-  return { app, registry, engines }
+  const root = mkdtempSync(join(tmpdir(), 'cc-web-ctx-'))
+  const app = createApp({ projectsRoot: root, registry })
+  return { app, registry, engines, root }
 }
 
 describe('GET /api/v1/sessions/:id/context', () => {
@@ -58,17 +61,39 @@ describe('GET /api/v1/sessions/:id/context', () => {
       data: { total_tokens: number; max_tokens: number; percentage: number }
     }
     expect(body.code).toBe(0)
-    expect(body.data).toEqual({ total_tokens: 201000, max_tokens: 1000000, percentage: 20 })
+    expect(body.data).toEqual({ total_tokens: 201000, max_tokens: 1000000, percentage: 20, estimated: false })
   })
 
-  it('没有活引擎 → null，绝不 spawn', async () => {
-    const { app, engines } = setup()
+  it('没有活引擎且没有 jsonl → null，不为会话 spawn 引擎', async () => {
+    const { app } = setup()
     const body = (await (await app.request('/api/v1/sessions/s1/context')).json()) as {
       code: number
       data: unknown
     }
     expect(body.code).toBe(0)
     expect(body.data).toBeNull()
-    expect(engines.size).toBe(0)
+  })
+
+  it('引擎不在但有 jsonl → 末轮 usage 估算，窗口取元数据引擎的 maxTokens（M31）', async () => {
+    const { app, root } = setup()
+    mkdirSync(join(root, '-Users-x-p'))
+    writeFileSync(
+      join(root, '-Users-x-p', 'eeeeeeee-0000-0000-0000-00000000000e.jsonl'),
+      [
+        JSON.stringify({ type: 'user', uuid: 'u1', parentUuid: null, message: { role: 'user', content: 'hi' } }),
+        JSON.stringify({
+          type: 'assistant', uuid: 'a1', parentUuid: 'u1',
+          message: { role: 'assistant', model: 'm', content: [{ type: 'text', text: 'ok' }],
+            usage: { input_tokens: 100000, output_tokens: 1000, cache_creation_input_tokens: 50000, cache_read_input_tokens: 50000 } },
+        }),
+      ].join('\n') + '\n',
+    )
+    const body = (await (
+      await app.request('/api/v1/sessions/eeeeeeee-0000-0000-0000-00000000000e/context')
+    ).json()) as { code: number; data: { total_tokens: number; max_tokens: number; estimated: boolean } }
+    expect(body.code).toBe(0)
+    expect(body.data.total_tokens).toBe(201000)
+    expect(body.data.max_tokens).toBe(1000000) // 元数据引擎给的窗口
+    expect(body.data.estimated).toBe(true)
   })
 })

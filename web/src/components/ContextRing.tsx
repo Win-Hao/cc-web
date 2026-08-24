@@ -11,6 +11,8 @@ export interface ContextInfo {
   total: number
   max: number
   percentage: number
+  /** 引擎不在时的 jsonl 末轮估算（M31） */
+  estimated: boolean
 }
 
 function fmtTokens(n: number): string {
@@ -58,6 +60,7 @@ export function ContextRing({ info }: { info: ContextInfo }) {
         </TooltipTrigger>
         <TooltipContent side="top">
           使用 {fmtTokens(info.total)} / {fmtTokens(info.max)} tokens ({Math.round(pct)}%)
+          {info.estimated && '（估算）'}
         </TooltipContent>
       </Tooltip>
     </TooltipProvider>

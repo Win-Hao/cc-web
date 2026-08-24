@@ -130,12 +130,12 @@ export default function App() {
   /** context 窗口用量（M30）：引擎活着才有，拿不到就不显示 */
   const loadContext = useCallback(async (id: string) => {
     try {
-      const d = await api<{ total_tokens: number; max_tokens: number; percentage: number } | null>(
-        `/api/v1/sessions/${id}/context`,
-      )
+      const d = await api<{
+        total_tokens: number; max_tokens: number; percentage: number; estimated?: boolean
+      } | null>(`/api/v1/sessions/${id}/context`)
       setContextInfo(
         d !== null && typeof d.max_tokens === 'number' && d.max_tokens > 0
-          ? { total: d.total_tokens, max: d.max_tokens, percentage: d.percentage }
+          ? { total: d.total_tokens, max: d.max_tokens, percentage: d.percentage, estimated: d.estimated === true }
           : null,
       )
     } catch {
