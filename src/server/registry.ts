@@ -146,6 +146,11 @@ export class SessionRegistry {
     return this.engines.get(sessionId)
   }
 
+  /** 当前有活引擎的会话 id（M32：账户级查询优先复用活引擎） */
+  liveSessionIds(): string[] {
+    return [...this.engines.keys()]
+  }
+
   /**
    * 新建会话（M12）：服务器发 uuid，工厂用 --session-id 起全新引擎，
    * cwd 由调用方给。引擎立即登记进表 —— jsonl 要到首条消息才落盘，

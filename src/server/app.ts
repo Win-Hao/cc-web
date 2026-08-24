@@ -477,6 +477,31 @@ export function createApp(deps: AppDeps) {
     )
   })
 
+  /**
+   * M32：账户级套餐用量（底部菜单的面板）。优先借任意活引擎发 get_usage；
+   * 一个都没有就临时起空白引擎，拿完即停（同 meta 引擎的套路）。
+   */
+  app.get('/api/v1/plan-usage', async (c) => {
+    if (deps.registry === undefined) return c.json(ok(null))
+    const live = deps.registry.liveSessionIds()[0]
+    const id = live ?? (await deps.registry.create(homedir()).catch(() => null))
+    if (id === null) return c.json(ok(null))
+    try {
+      const payload = await deps.registry.getUsage(id)
+      if (typeof payload !== 'object' || payload === null) return c.json(ok(null))
+      const p = payload as Record<string, unknown>
+      return c.json(
+        ok({
+          rate_limits_available: p.rate_limits_available !== false,
+          rate_limits: p.rate_limits ?? null,
+          subscription_type: p.subscription_type ?? null,
+        }),
+      )
+    } finally {
+      if (live === undefined) void deps.registry.get(id)?.stop()
+    }
+  })
+
   app.get('/api/v1/usage', async (c) => {
     // 订阅额度是账户级的，但 get_usage 要走某个会话的引擎 ——
     // 调用方用 ?session=<id> 指定；没有就没法拿，回 null（不显示，不报错）

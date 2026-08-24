@@ -7,6 +7,7 @@ import { useMemo, useState } from 'react'
 import { ChevronDown, ChevronUp, Folder, Plus, Search } from 'lucide-react'
 import type { SessionSummary } from '../types'
 import { groupKey, groupName, relTime, sessionTitle } from '../lib/format'
+import { SidebarFooter } from './SidebarFooter'
 import { cn } from '@/lib/utils'
 
 const GROUP_LIMIT = 5
@@ -152,6 +153,7 @@ export function Sidebar({ sessions, loading, activeId, onSelect, onNewSession }:
           )
         })}
       </div>
+      <SidebarFooter />
     </aside>
   )
 }

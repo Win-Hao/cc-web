@@ -68,7 +68,15 @@ const CANNED = {
   },
   get_settings: { applied: { effort: 'max', model: 'claude-opus-5[1m]' } },
   get_context_usage: { totalTokens: 201000, maxTokens: 1000000, percentage: 20.1, categories: [] },
-  get_usage: { session: { total_cost_usd: 0.12, model_usage: {} }, rate_limits_available: false, rate_limits: null },
+  get_usage: {
+    session: { total_cost_usd: 0.12, model_usage: {} },
+    rate_limits_available: true,
+    subscription_type: 'pro',
+    rate_limits: {
+      five_hour: { utilization: 21, resets_at: '2026-08-24T20:00:00+08:00' },
+      seven_day: { utilization: 6, resets_at: '2026-08-31T00:00:00+08:00' },
+    },
+  },
 }
 
 if (echoResult || autoControl) {
