@@ -10,9 +10,16 @@ import type { ProjectChoice } from '../types'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
+import { ModelPicker } from './ModelPicker'
+import type { ModelOption } from '../types'
+
+const PERMISSION_MODES = ['default', 'acceptEdits', 'plan', 'bypassPermissions']
 
 /** meta.home 只拉一次：把绝对路径缩写成 ~/… */
 let homeCache: string | null = null
@@ -31,12 +38,22 @@ interface Props {
   projects: ProjectChoice[]
   defaultCwd: string | null
   onSend: (cwd: string, text: string) => void
+  permMode: string
+  onPermMode: (mode: string) => void
+  models: ModelOption[]
+  modelValue: string | null
+  effort: string | null
+  onModel: (value: string) => void
+  onEffort: (level: string) => void
 }
 
 const menuRow =
   'flex w-full cursor-pointer items-center gap-2 rounded-md px-2.5 py-2 text-left outline-none hover:bg-sidebar-accent focus-visible:bg-sidebar-accent'
 
-export function DraftView({ projects, defaultCwd, onSend }: Props) {
+export function DraftView({
+  projects, defaultCwd, onSend,
+  permMode, onPermMode, models, modelValue, effort, onModel, onEffort,
+}: Props) {
   const [cwd, setCwd] = useState<string | null>(defaultCwd ?? projects[0]?.cwd ?? null)
   const [menuOpen, setMenuOpen] = useState(false)
   const [browse, setBrowse] = useState(false)
@@ -92,14 +109,14 @@ export function DraftView({ projects, defaultCwd, onSend }: Props) {
         <div className="mt-2 text-[13px] text-muted-foreground">还没有消息 —— 在下方输入开始对话</div>
       </div>
       <div className="w-[min(720px,94%)]">
-        <div className="relative rounded-[28px] border bg-background shadow-md transition-shadow focus-within:border-primary focus-within:ring-[3px] focus-within:ring-ring">
+        <div className="rounded-[24px] border bg-background shadow-md transition-shadow focus-within:border-primary focus-within:ring-[3px] focus-within:ring-ring">
           <Textarea
             ref={taRef}
             rows={2}
             autoFocus
             value={text}
             placeholder="输入消息…"
-            className="max-h-64 min-h-[110px] py-3.5 pr-[56px] pl-4"
+            className="max-h-64 min-h-[90px] px-4 pt-3.5 pb-1"
             onChange={(e) => {
               setText(e.target.value)
               e.target.style.height = 'auto'
@@ -112,15 +129,35 @@ export function DraftView({ projects, defaultCwd, onSend }: Props) {
               }
             }}
           />
-          <Button
-            size="icon"
-            title="发送"
-            className="absolute right-2 bottom-2"
-            disabled={text.trim() === '' || cwd === null}
-            onClick={send}
-          >
-            <ArrowUp className="size-4" />
-          </Button>
+          <div className="flex items-center gap-1.5 px-2 pb-2">
+            <Select value={permMode} onValueChange={onPermMode}>
+              <SelectTrigger
+                className={cn(
+                  'h-7 rounded-full border-0 bg-transparent px-2.5 hover:bg-sidebar-accent',
+                  permMode === 'bypassPermissions' && 'text-destructive',
+                )}
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {PERMISSION_MODES.map((m) => (
+                  <SelectItem key={m} value={m}>{m}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <div className="flex-1" />
+            <ModelPicker
+              models={models}
+              modelValue={modelValue}
+              modelResolved={null}
+              effort={effort}
+              onModel={onModel}
+              onEffort={onEffort}
+            />
+            <Button size="icon" title="发送" disabled={text.trim() === '' || cwd === null} onClick={send}>
+              <ArrowUp className="size-4" />
+            </Button>
+          </div>
         </div>
         <div className="mt-2 flex">
           <Popover

@@ -53,6 +53,8 @@ export default function App() {
   const modelsLoadedRef = useRef(false)
   /** 草稿态发出的首条消息：等会话选中、effect 重置完再乐观渲染 + 发送 */
   const pendingPromptRef = useRef<string | null>(null)
+  /** 草稿态里选好的模型/思考/权限：会话创建后、首条 prompt 前按序应用 */
+  const pendingSetupRef = useRef<{ model: string | null; effort: string | null; permMode: string | null } | null>(null)
   /** 最近一次活跃会话的项目目录 —— 草稿态选择器的默认值 */
   const lastCwdRef = useRef<string | null>(null)
   /** tool_use id → 它渲染在哪条消息的哪个段（tool_result 回填用） */
@@ -208,6 +210,12 @@ export default function App() {
     }
   }, [])
 
+  // 草稿态（没选会话）也要模型列表：借最近一个会话的引擎拉（账户级只拉一次）
+  useEffect(() => {
+    if (sessionId !== null || sessions.length === 0 || modelsLoadedRef.current) return
+    void loadModels(sessions[0]!.session_id)
+  }, [sessionId, sessions, loadModels])
+
   const loadHistory = useCallback(async (id: string) => {
     try {
       const d = await api<{ messages: HistoryMessage[] }>(`/api/v1/sessions/${id}/history?limit=100`)
@@ -266,13 +274,29 @@ export default function App() {
     toolLocRef.current = new Map()
 
     const pending = pendingPromptRef.current
+    const setup = pendingSetupRef.current
     pendingPromptRef.current = null
+    pendingSetupRef.current = null
     if (pending !== null) {
-      // 草稿态创建的新会话：没有历史可拉（拉了还会覆盖乐观气泡），直接发首条
+      // 草稿态创建的新会话：没有历史可拉（拉了还会覆盖乐观气泡），直接发首条。
+      // 草稿里选过的模型/思考/权限先恢复显示（上面刚被重置），再按序应用 ——
+      // 控制请求都确认后才发 prompt，保证首轮就用上。
       setMsgs([{ key: nextKey(), role: 'user', segments: [{ kind: 'text', text: pending }], meta: null, sidechain: null }])
-      post(`/api/v1/sessions/${sessionId}/prompt`, { text: pending }).catch((e: Error) =>
-        appendError(e.message),
-      )
+      if (setup?.model != null) setModelValue(setup.model)
+      if (setup?.effort != null) setEffort(setup.effort)
+      if (setup?.permMode != null) setPermMode(setup.permMode)
+      void (async () => {
+        try {
+          if (setup?.model != null) await post(`/api/v1/sessions/${sessionId}/model`, { model: setup.model })
+          if (setup?.effort != null) await post(`/api/v1/sessions/${sessionId}/effort`, { effort: setup.effort })
+          if (setup?.permMode != null) {
+            await post(`/api/v1/sessions/${sessionId}/permission-mode`, { mode: setup.permMode })
+          }
+          await post(`/api/v1/sessions/${sessionId}/prompt`, { text: pending })
+        } catch (e) {
+          appendError((e as Error).message)
+        }
+      })()
     } else {
       void loadHistory(sessionId)
     }
@@ -432,7 +456,10 @@ export default function App() {
 
   const pickModel = useCallback(
     (value: string) => {
-      if (sessionId === null) return
+      if (sessionId === null) {
+        setModelValue(value) // 草稿态：先记下，首条消息时应用
+        return
+      }
       const prev = modelValue
       setModelValue(value)
       post(`/api/v1/sessions/${sessionId}/model`, { model: value }).catch((e: Error) => {
@@ -445,7 +472,10 @@ export default function App() {
 
   const pickEffort = useCallback(
     (level: string) => {
-      if (sessionId === null) return
+      if (sessionId === null) {
+        setEffort(level)
+        return
+      }
       const prev = effort
       setEffort(level)
       post(`/api/v1/sessions/${sessionId}/effort`, { effort: level }).catch((e: Error) => {
@@ -458,7 +488,10 @@ export default function App() {
 
   const pickPermMode = useCallback(
     (next: string) => {
-      if (sessionId === null) return
+      if (sessionId === null) {
+        setPermMode(next)
+        return
+      }
       const prev = permMode
       setPermMode(next)
       post(`/api/v1/sessions/${sessionId}/permission-mode`, { mode: next }).catch((e: Error) => {
@@ -516,6 +549,11 @@ export default function App() {
 
   const draftSend = useCallback(
     (cwd: string, text: string) => {
+      pendingSetupRef.current = {
+        model: modelValue,
+        effort,
+        permMode: permMode !== 'default' ? permMode : null,
+      }
       post<{ session_id: string; cwd: string }>('/api/v1/sessions', { cwd })
         .then((d) => {
           setSessions((prev) => [
@@ -534,7 +572,7 @@ export default function App() {
         })
         .catch((e: Error) => appendError(e.message))
     },
-    [appendError],
+    [appendError, modelValue, effort, permMode],
   )
 
   const active = sessions.find((s) => s.session_id === sessionId)
@@ -580,7 +618,18 @@ export default function App() {
           )}
         </header>
         {sessionId === null ? (
-          <DraftView projects={projects} defaultCwd={lastCwdRef.current} onSend={draftSend} />
+          <DraftView
+            projects={projects}
+            defaultCwd={lastCwdRef.current}
+            onSend={draftSend}
+            permMode={permMode}
+            onPermMode={pickPermMode}
+            models={models}
+            modelValue={modelValue}
+            effort={effort}
+            onModel={pickModel}
+            onEffort={pickEffort}
+          />
         ) : (
           <>
             <Chat messages={msgs} streamText={stream} sessionId={sessionId} />
