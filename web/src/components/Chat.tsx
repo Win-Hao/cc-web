@@ -575,6 +575,8 @@ export function Chat({
   /** 是否贴底（M56）：只有贴底才自动跟随新消息；上翻时出「最新消息」按钮 */
   const [atBottom, setAtBottom] = useState(true)
   const atBottomRef = useRef(true)
+  /** 当前视口对应的用户消息锚点（M59 右侧锚点轨） */
+  const [activeAnchor, setActiveAnchor] = useState<string | null>(null)
   /** 前插锚点（M51）：点「加载更早」时记录滚动位置，插完还原，不跳底 */
   const prependRef = useRef<{ h: number; top: number } | null>(null)
   const nodes = useMemo(
@@ -600,6 +602,25 @@ export function Chat({
     const near = el.scrollHeight - el.scrollTop - el.clientHeight < 48
     atBottomRef.current = near
     setAtBottom(near)
+    // 锚点轨（M59）：视口上沿附近的最后一条用户消息 = 当前所在段落
+    const top = el.getBoundingClientRect().top
+    let current: string | null = null
+    for (const node of el.querySelectorAll('[data-umsg]')) {
+      if (node.getBoundingClientRect().top - top <= 120) current = node.getAttribute('data-umsg')
+      else break
+    }
+    setActiveAnchor(current)
+  }
+
+  // 消息变化后重算一次锚点(初次加载/翻页)
+  useEffect(() => {
+    onScroll()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages])
+
+  const jumpToAnchor = (key: string) => {
+    const el = scrollRef.current?.querySelector(`[data-umsg="${key}"]`)
+    el?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
 
   const jumpToBottom = () => {
@@ -637,7 +658,7 @@ export function Chat({
     }
     const m = it.m
     return m.role === 'user' ? (
-      <div className="mt-4 flex flex-col items-end gap-2 first:mt-0" key={m.key}>
+      <div className="mt-4 flex scroll-mt-2 flex-col items-end gap-2 first:mt-0" data-umsg={m.key} key={m.key}>
         {textOfSegments(m.segments) !== '' && (
           <div className="max-w-[78%] rounded-2xl rounded-br-md border border-accent-bd bg-accent px-[15px] py-[11px] text-[15px] leading-normal break-words whitespace-pre-wrap shadow-xs">
             {textOfSegments(m.segments)}
@@ -739,6 +760,25 @@ export function Chat({
         <TurnFooter turn={turn} />
       </div>
     </div>
+    {(() => {
+      const anchors = messages.filter((m) => m.role === 'user')
+      if (anchors.length < 2) return null
+      return (
+        <div className="absolute top-1/2 right-1.5 z-10 flex max-h-[70%] -translate-y-1/2 flex-col items-center gap-[5px] overflow-hidden">
+          {anchors.map((m) => (
+            <button
+              className={cn(
+                'h-[3px] shrink-0 cursor-pointer rounded-full transition-all',
+                m.key === activeAnchor ? 'w-4 bg-primary' : 'w-3 bg-border hover:bg-muted-foreground',
+              )}
+              key={m.key}
+              title={textOfSegments(m.segments).slice(0, 48)}
+              onClick={() => jumpToAnchor(m.key)}
+            />
+          ))}
+        </div>
+      )
+    })()}
     {!atBottom && (
       <button
         className="absolute bottom-4 left-1/2 z-10 flex -translate-x-1/2 cursor-pointer items-center gap-1.5 rounded-full border bg-background/90 px-3.5 py-1.5 text-xs text-muted-foreground shadow-md backdrop-blur select-none hover:bg-secondary hover:text-foreground"
