@@ -3,7 +3,7 @@
  * 用户消息 = 右对齐软 accent 气泡；助手消息 = 文本段 + 工具行交错。
  */
 import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Ban, Check, ChevronRight, LoaderCircle, Sparkles, X } from 'lucide-react'
+import { ArrowDown, Ban, Check, ChevronRight, LoaderCircle, Sparkles, X } from 'lucide-react'
 import type { ChatMsg, ImageRef, StreamTool, ToolSeg, TurnStatus } from '../types'
 import { formatElapsedMs } from '../lib/format'
 import { textOfSegments } from '../lib/segments'
@@ -572,6 +572,9 @@ export function Chat({
   useLang()
   const scrollRef = useRef<HTMLDivElement>(null)
   const [lightbox, setLightbox] = useState<ImageRef | null>(null)
+  /** 是否贴底（M56）：只有贴底才自动跟随新消息；上翻时出「最新消息」按钮 */
+  const [atBottom, setAtBottom] = useState(true)
+  const atBottomRef = useRef(true)
   /** 前插锚点（M51）：点「加载更早」时记录滚动位置，插完还原，不跳底 */
   const prependRef = useRef<{ h: number; top: number } | null>(null)
   const nodes = useMemo(
@@ -587,8 +590,25 @@ export function Chat({
       prependRef.current = null
       return
     }
-    el.scrollTop = el.scrollHeight
+    // 用户上翻阅读时不抢滚动位置（M56）；贴底才跟随
+    if (atBottomRef.current) el.scrollTop = el.scrollHeight
   }, [messages, streamText, streamThinking, streamTools.length, turn.running])
+
+  const onScroll = () => {
+    const el = scrollRef.current
+    if (el === null) return
+    const near = el.scrollHeight - el.scrollTop - el.clientHeight < 48
+    atBottomRef.current = near
+    setAtBottom(near)
+  }
+
+  const jumpToBottom = () => {
+    const el = scrollRef.current
+    if (el === null) return
+    atBottomRef.current = true
+    setAtBottom(true)
+    el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+  }
 
   const renderItem = (it: RenderItem): React.ReactNode => {
     if (it.kind === 'toolgroup') {
@@ -673,7 +693,8 @@ export function Chat({
 
   return (
     <LightboxCtx.Provider value={setLightbox}>
-    <div className="min-h-0 flex-1 overflow-y-auto" ref={scrollRef}>
+    <div className="relative min-h-0 flex-1">
+    <div className="h-full overflow-y-auto" onScroll={onScroll} ref={scrollRef}>
       <div className="mx-auto flex max-w-[760px] flex-col px-4 pt-4 pb-5">
         {hasEarlier && (
           <button
@@ -717,6 +738,16 @@ export function Chat({
         )}
         <TurnFooter turn={turn} />
       </div>
+    </div>
+    {!atBottom && (
+      <button
+        className="absolute bottom-4 left-1/2 z-10 flex -translate-x-1/2 cursor-pointer items-center gap-1.5 rounded-full border bg-background/90 px-3.5 py-1.5 text-xs text-muted-foreground shadow-md backdrop-blur select-none hover:bg-secondary hover:text-foreground"
+        onClick={jumpToBottom}
+      >
+        <ArrowDown className="size-3.5" />
+        {t('backToLatest')}
+      </button>
+    )}
     </div>
     {lightbox !== null && <Lightbox image={lightbox} onClose={() => setLightbox(null)} />}
     </LightboxCtx.Provider>
