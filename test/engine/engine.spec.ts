@@ -90,6 +90,23 @@ describe('Engine 生命周期', () => {
     }
   })
 
+  it('引擎垂死时的 stdin 写入不崩服务器进程（EPIPE 守卫，M38）', async () => {
+    const engine = makeEngine(['--exit', '0'])
+    await engine.start()
+    const exited = new Promise<void>((r) => engine.on('exit', () => r()))
+    // 进程正在退出的窗口里连续写：任何一次都不许变成未处理的 stream error
+    for (let i = 0; i < 30; i++) {
+      try {
+        engine.send({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'x' }] } })
+      } catch {
+        break // 「engine is not running」是预期的失败方式
+      }
+      await new Promise((r) => setTimeout(r, 5))
+    }
+    await exited
+    // 走到这里 = 没有未处理异常崩掉测试进程
+  })
+
   it('子进程已被信号杀死后再 stop() 立即返回，不挂起', async () => {
     const engine = makeEngine(['--hold'])
     await engine.start()

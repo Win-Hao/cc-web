@@ -73,6 +73,14 @@ export class Engine extends EventEmitter {
       })
       child.once('spawn', () => resolve())
 
+      // EPIPE 守卫（M38）：快速退出的 CLI（坏登录态、
+      // 模型不存在）会让 stdin 写入变成未处理的 stream error，直接崩掉
+      // 服务器进程。EPIPE/已销毁 属于「进程正在死」，close 处理器会报；
+      // 其它错误走正常 error 通道（内置兜底 listener 保证不裸抛）。
+      child.stdin!.on('error', (err: NodeJS.ErrnoException) => {
+        if (err.code !== 'EPIPE' && err.code !== 'ERR_STREAM_DESTROYED') this.emitError(err)
+      })
+
       // setEncoding 让 Node 的 StringDecoder 处理跨 chunk 的 UTF-8 多字节
       // 字符 —— 逐 chunk 各自 toString 会把劈开的汉字解码成替换符（乱码）
       child.stdout!.setEncoding('utf8')
@@ -102,7 +110,13 @@ export class Engine extends EventEmitter {
     if (stdin === null || stdin === undefined || !stdin.writable) {
       throw new Error('engine is not running')
     }
-    stdin.write(JSON.stringify(frame) + '\n')
+    try {
+      stdin.write(JSON.stringify(frame) + '\n')
+    } catch {
+      // writable 检查和写入之间的竞态窗口：进程刚好死了 → 统一成
+      // 「没在跑」错误，调用方（registry）已有处理路径
+      throw new Error('engine is not running')
+    }
   }
 
   /**
