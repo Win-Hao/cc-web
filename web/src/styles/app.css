@@ -262,8 +262,80 @@
   font-size: var(--content-font-size);
   line-height: 1.6;
   color: var(--color-text);
-  white-space: pre-wrap;
   word-break: break-word;
+}
+.a-msg.err .msg { white-space: pre-wrap; }
+
+/* ── Markdown（助手文本段）：同类项目 的「聊天读感」——UI sans 正文，代码保持 mono ── */
+.md > :first-child { margin-top: 0; }
+.md > :last-child { margin-bottom: 0; }
+.md p { margin: 8px 0 0; }
+.md p:first-child { margin-top: 0; }
+.md h1, .md h2, .md h3, .md h4 {
+  margin: 14px 0 6px;
+  font-weight: 600;
+  line-height: var(--leading-tight);
+}
+.md h1 { font-size: var(--text-xl, 18px); }
+.md h2 { font-size: var(--text-lg); }
+.md h3, .md h4 { font-size: var(--content-font-size); }
+.md ul, .md ol { margin: 6px 0; padding-left: 22px; }
+.md ul { list-style: disc; }
+.md ol { list-style: decimal; }
+.md li { margin: 2px 0; }
+.md li > p { margin: 0; }
+.md blockquote {
+  margin: 8px 0;
+  padding: 2px 12px;
+  border-left: 3px solid var(--color-line-strong);
+  color: var(--color-text-muted);
+}
+.md a { color: var(--color-accent); text-decoration: none; }
+.md a:hover { text-decoration: underline; }
+.md hr { border: none; border-top: 1px solid var(--color-line); margin: 12px 0; }
+.md table { border-collapse: collapse; margin: 8px 0; font-size: var(--ui-font-size-sm); display: block; overflow-x: auto; }
+.md th, .md td { border: 1px solid var(--color-line); padding: 5px 10px; text-align: left; }
+.md th { background: var(--color-surface-sunken); font-weight: 500; }
+.md :not(pre) > code {
+  font: 0.9em var(--font-mono);
+  background: var(--color-surface-sunken);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-xs);
+  padding: 1px 5px;
+}
+.md pre {
+  margin: 8px 0;
+  padding: 10px 12px;
+  background: var(--color-surface-sunken);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  overflow-x: auto;
+  font: var(--text-xs) / 1.6 var(--font-mono);
+}
+.md pre code { background: none; border: none; padding: 0; font: inherit; }
+
+/* 高亮 token 色板：GitHub 风格，亮暗各一套（跟随 token 层的主题切换） */
+.md .hljs-comment, .md .hljs-quote { color: #6a737d; }
+.md .hljs-keyword, .md .hljs-selector-tag, .md .hljs-type { color: #d73a49; }
+.md .hljs-string, .md .hljs-regexp, .md .hljs-addition { color: #032f62; }
+.md .hljs-number, .md .hljs-literal, .md .hljs-symbol { color: #005cc5; }
+.md .hljs-title, .md .hljs-function .hljs-title, .md .hljs-section { color: #6f42c1; }
+.md .hljs-attr, .md .hljs-attribute, .md .hljs-variable, .md .hljs-template-variable { color: #e36209; }
+.md .hljs-built_in, .md .hljs-builtin-name { color: #005cc5; }
+.md .hljs-name, .md .hljs-selector-id, .md .hljs-selector-class { color: #22863a; }
+.md .hljs-deletion { color: #b31d28; }
+.md .hljs-meta { color: #6a737d; }
+@media (prefers-color-scheme: dark) {
+  .md .hljs-comment, .md .hljs-quote { color: #8b949e; }
+  .md .hljs-keyword, .md .hljs-selector-tag, .md .hljs-type { color: #ff7b72; }
+  .md .hljs-string, .md .hljs-regexp, .md .hljs-addition { color: #a5d6ff; }
+  .md .hljs-number, .md .hljs-literal, .md .hljs-symbol { color: #79c0ff; }
+  .md .hljs-title, .md .hljs-function .hljs-title, .md .hljs-section { color: #d2a8ff; }
+  .md .hljs-attr, .md .hljs-attribute, .md .hljs-variable, .md .hljs-template-variable { color: #ffa657; }
+  .md .hljs-built_in, .md .hljs-builtin-name { color: #79c0ff; }
+  .md .hljs-name, .md .hljs-selector-id, .md .hljs-selector-class { color: #7ee787; }
+  .md .hljs-deletion { color: #ffa198; }
+  .md .hljs-meta { color: #8b949e; }
 }
 .a-meta { margin-top: 4px; font-size: var(--text-xs); color: var(--color-text-faint); }
 

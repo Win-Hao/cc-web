@@ -6,6 +6,7 @@
 import { useEffect, useRef } from 'react'
 import type { ChatMsg, ToolSeg } from '../types'
 import { textOfSegments } from '../lib/segments'
+import { Markdown } from './Markdown'
 
 function ToolRow({ seg }: { seg: ToolSeg }) {
   const expandable = seg.detail !== '' || (seg.result !== null && seg.result !== '')
@@ -58,7 +59,11 @@ export function Chat({ messages, streamText, hasSession }: Props) {
             <div className={m.role === 'error' ? 'a-msg err' : 'a-msg'} key={m.key}>
               {m.segments.map((seg, i) =>
                 seg.kind === 'text' ? (
-                  <div className="msg" key={i}>{seg.text}</div>
+                  m.role === 'error' ? (
+                    <div className="msg" key={i}>{seg.text}</div>
+                  ) : (
+                    <div className="msg" key={i}><Markdown text={seg.text} /></div>
+                  )
                 ) : (
                   <ToolRow seg={seg} key={i} />
                 ),
@@ -69,7 +74,7 @@ export function Chat({ messages, streamText, hasSession }: Props) {
         )}
         {streamText !== '' && (
           <div className="a-msg">
-            <div className="msg">{streamText}</div>
+            <div className="msg"><Markdown text={streamText} /></div>
           </div>
         )}
       </div>
