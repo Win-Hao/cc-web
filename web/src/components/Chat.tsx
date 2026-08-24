@@ -366,15 +366,193 @@ function buildRenderItems(messages: ChatMsg[]): RenderItem[] {
   )
 }
 
+/**
+ * 已工作折叠（M49）：一轮里的思考+工具收进「已工作 Ns」头部，只留最终
+ * 回答在外面。正在跑的那一轮不收（过程实时可见），跑完自动收起。
+ */
+interface TurnNode {
+  kind: 'turn'
+  key: string
+  work: RenderItem[]
+  finals: RenderItem[]
+  seconds: number | null
+}
+type Node = RenderItem | TurnNode
+
+function buildNodes(items: RenderItem[], liveTailOpen: boolean): Node[] {
+  const nodes: Node[] = []
+  let userTs: number | null = null
+  let buf: RenderItem[] = []
+
+  const flush = (open: boolean) => {
+    if (buf.length === 0) return
+    const acc = buf
+    buf = []
+    // 最终回答 = 最后一个带 text/image 段的普通 assistant 消息；
+    // 它里面的 thinking 段仍归入「已工作」
+    let finalIdx = -1
+    for (let i = acc.length - 1; i >= 0; i--) {
+      const it = acc[i]!
+      if (it.kind === 'msg' && it.m.segments.some((sg) => sg.kind === 'text' || sg.kind === 'image')) {
+        finalIdx = i
+        break
+      }
+    }
+    const work: RenderItem[] = []
+    const finals: RenderItem[] = []
+    acc.forEach((it, i) => {
+      if (i !== finalIdx) {
+        work.push(it)
+        return
+      }
+      const m = (it as { m: ChatMsg }).m
+      const thinkSegs = m.segments.filter((sg) => sg.kind === 'thinking')
+      if (thinkSegs.length > 0) {
+        work.push({ kind: 'msg', m: { ...m, key: `${m.key}-think`, segments: thinkSegs, meta: null, sidechain: null } })
+      }
+      finals.push({ kind: 'msg', m: { ...m, segments: m.segments.filter((sg) => sg.kind !== 'thinking') } })
+    })
+    if (work.length === 0 || open) {
+      // 没有过程,或这一轮还在跑 → 平铺
+      nodes.push(...work, ...finals)
+      return
+    }
+    const lastMsg = [...acc].reverse().find((it): it is { kind: 'msg'; m: ChatMsg } => it.kind === 'msg')
+    const endTs = lastMsg?.m.ts ?? null
+    const seconds =
+      userTs !== null && endTs !== null && endTs > userTs ? Math.max(1, Math.round((endTs - userTs) / 1000)) : null
+    nodes.push({ kind: 'turn', key: `turn-${acc[0]!.kind === 'msg' ? acc[0]!.m.key : acc[0]!.key}`, work, finals, seconds })
+  }
+
+  items.forEach((it, i) => {
+    const isUser = it.kind === 'msg' && it.m.role === 'user'
+    const isError = it.kind === 'msg' && it.m.role === 'error'
+    if (isUser || isError) {
+      flush(false)
+      nodes.push(it)
+      if (isUser) userTs = (it as { m: ChatMsg }).m.ts
+      return
+    }
+    buf.push(it)
+    if (i === items.length - 1) flush(liveTailOpen)
+  })
+  flush(false)
+  return nodes
+}
+
+function WorkedTurn({ node, children }: { node: TurnNode; children: React.ReactNode }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="mt-2.5 max-w-[94%] self-start">
+      <button
+        className="flex cursor-pointer items-center gap-1 rounded-md px-1 py-0.5 text-[13px] text-muted-foreground select-none hover:bg-secondary/60 hover:text-foreground"
+        onClick={() => setOpen((o) => !o)}
+      >
+        {node.seconds !== null ? t('workedFor', { s: formatElapsedMs(node.seconds * 1000) }) : t('workedPlain')}
+        <ChevronRight className={cn('size-3 text-faint transition-transform duration-150', open && 'rotate-90')} />
+      </button>
+      <div className={cn('cc-collapsible', open && 'open')}>
+        <div>
+          <div className="border-l-2 border-border pl-3">{children}</div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export function Chat({ messages, streamText, streamThinking, turn, sessionId }: Props) {
   useLang()
   const scrollRef = useRef<HTMLDivElement>(null)
-  const items = useMemo(() => buildRenderItems(messages), [messages])
+  const nodes = useMemo(
+    () => buildNodes(buildRenderItems(messages), turn.running),
+    [messages, turn.running],
+  )
 
   useEffect(() => {
     const el = scrollRef.current
     if (el !== null) el.scrollTop = el.scrollHeight
   }, [messages, streamText, streamThinking, turn.running])
+
+  const renderItem = (it: RenderItem): React.ReactNode => {
+    if (it.kind === 'toolgroup') {
+      const segs = it.msgs.flatMap((gm) => gm.segments.filter((sg): sg is ToolSeg => sg.kind === 'tool'))
+      return (
+        <div className="mt-0.5 max-w-[94%] self-start" key={it.key}>
+          <ToolGroupCard segs={segs}>
+            {it.msgs.map((gm) =>
+              gm.segments.map((seg, i) =>
+                seg.kind === 'tool' ? (
+                  <div key={`${gm.key}-${i}`}>
+                    <ToolRow seg={seg} />
+                    {seg.agent !== null && (
+                      <SidechainBlock
+                        fetchPath={`/api/v1/sessions/${sessionId}/subagents/${seg.agent.id}`}
+                        label={seg.agent.label}
+                      />
+                    )}
+                  </div>
+                ) : null,
+              ),
+            )}
+          </ToolGroupCard>
+        </div>
+      )
+    }
+    const m = it.m
+    return m.role === 'user' ? (
+      <div className="mt-4 flex flex-col items-end gap-2 first:mt-0" key={m.key}>
+        {textOfSegments(m.segments) !== '' && (
+          <div className="max-w-[78%] rounded-2xl rounded-br-md border border-accent-bd bg-accent px-[15px] py-[11px] text-[15px] leading-normal break-words whitespace-pre-wrap shadow-xs">
+            {textOfSegments(m.segments)}
+          </div>
+        )}
+        {m.segments.filter((s) => s.kind === 'image').map((s, i) => (
+          <Thumb image={s.image} key={i} />
+        ))}
+      </div>
+    ) : (
+      <div className="mt-2.5 max-w-[94%] self-start" key={m.key}>
+        {m.segments.map((seg, i) =>
+          seg.kind === 'thinking' ? (
+            <ThinkingBlock key={i} seconds={seg.seconds} text={seg.text} />
+          ) : seg.kind === 'image' ? (
+            <div className="mt-2" key={i}>
+              <Thumb image={seg.image} />
+            </div>
+          ) : seg.kind === 'text' ? (
+            m.role === 'error' ? (
+              <div className="text-[15px] leading-relaxed break-words whitespace-pre-wrap text-destructive" key={i}>
+                {seg.text}
+              </div>
+            ) : (
+              <div className="text-[15px] leading-relaxed break-words" key={i}>
+                <Markdown text={seg.text} />
+              </div>
+            )
+          ) : (
+            <div key={i}>
+              <ToolRow seg={seg} />
+              {seg.agent !== null && (
+                <SidechainBlock
+                  fetchPath={`/api/v1/sessions/${sessionId}/subagents/${seg.agent.id}`}
+                  label={seg.agent.label}
+                />
+              )}
+            </div>
+          ),
+        )}
+        {m.sidechain !== null && (
+          <SidechainBlock
+            fetchPath={`/api/v1/sessions/${sessionId}/sidechains/${m.sidechain.uuid}`}
+            label={t('subagentMsgs', { n: m.sidechain.count })}
+          />
+        )}
+        {m.meta !== null && !m.segments.every((sg) => sg.kind === 'tool') && (
+          <div className="mt-1 text-xs text-faint">{m.meta}</div>
+        )}
+      </div>
+    )
+  }
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto" ref={scrollRef}>
@@ -384,86 +562,16 @@ export function Chat({ messages, streamText, streamThinking, turn, sessionId }: 
             {t('draftHint')}
           </div>
         )}
-        {items.map((it) => {
-          if (it.kind === 'toolgroup') {
-            const segs = it.msgs.flatMap((gm) => gm.segments.filter((sg): sg is ToolSeg => sg.kind === 'tool'))
-            return (
-              <div className="mt-0.5 max-w-[94%] self-start" key={it.key}>
-                <ToolGroupCard segs={segs}>
-                  {it.msgs.map((gm) =>
-                    gm.segments.map((seg, i) =>
-                      seg.kind === 'tool' ? (
-                        <div key={`${gm.key}-${i}`}>
-                          <ToolRow seg={seg} />
-                          {seg.agent !== null && (
-                            <SidechainBlock
-                              fetchPath={`/api/v1/sessions/${sessionId}/subagents/${seg.agent.id}`}
-                              label={seg.agent.label}
-                            />
-                          )}
-                        </div>
-                      ) : null,
-                    ),
-                  )}
-                </ToolGroupCard>
-              </div>
-            )
-          }
-          const m = it.m
-          return m.role === 'user' ? (
-            <div className="mt-4 flex flex-col items-end gap-2 first:mt-0" key={m.key}>
-              {textOfSegments(m.segments) !== '' && (
-                <div className="max-w-[78%] rounded-2xl rounded-br-md border border-accent-bd bg-accent px-[15px] py-[11px] text-[15px] leading-normal break-words whitespace-pre-wrap shadow-xs">
-                  {textOfSegments(m.segments)}
-                </div>
-              )}
-              {m.segments.filter((s) => s.kind === 'image').map((s, i) => (
-                <Thumb image={s.image} key={i} />
-              ))}
+        {nodes.map((node) =>
+          node.kind === 'turn' ? (
+            <div key={node.key}>
+              <WorkedTurn node={node}>{node.work.map(renderItem)}</WorkedTurn>
+              {node.finals.map(renderItem)}
             </div>
           ) : (
-            <div className="mt-2.5 max-w-[94%] self-start" key={m.key}>
-              {m.segments.map((seg, i) =>
-                seg.kind === 'thinking' ? (
-                  <ThinkingBlock key={i} seconds={seg.seconds} text={seg.text} />
-                ) : seg.kind === 'image' ? (
-                  <div className="mt-2" key={i}>
-                    <Thumb image={seg.image} />
-                  </div>
-                ) : seg.kind === 'text' ? (
-                  m.role === 'error' ? (
-                    <div className="text-[15px] leading-relaxed break-words whitespace-pre-wrap text-destructive" key={i}>
-                      {seg.text}
-                    </div>
-                  ) : (
-                    <div className="text-[15px] leading-relaxed break-words" key={i}>
-                      <Markdown text={seg.text} />
-                    </div>
-                  )
-                ) : (
-                  <div key={i}>
-                    <ToolRow seg={seg} />
-                    {seg.agent !== null && (
-                      <SidechainBlock
-                        fetchPath={`/api/v1/sessions/${sessionId}/subagents/${seg.agent.id}`}
-                        label={seg.agent.label}
-                      />
-                    )}
-                  </div>
-                ),
-              )}
-              {m.sidechain !== null && (
-                <SidechainBlock
-                  fetchPath={`/api/v1/sessions/${sessionId}/sidechains/${m.sidechain.uuid}`}
-                  label={t('subagentMsgs', { n: m.sidechain.count })}
-                />
-              )}
-              {m.meta !== null && !m.segments.every((sg) => sg.kind === 'tool') && (
-                <div className="mt-1 text-xs text-faint">{m.meta}</div>
-              )}
-            </div>
-          )
-        })}
+            renderItem(node)
+          ),
+        )}
         {(streamText !== '' || streamThinking !== '') && (
           <div className="mt-2.5 max-w-[94%] self-start">
             {streamThinking !== '' && <ThinkingBlock streaming text={streamThinking} />}

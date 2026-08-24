@@ -94,6 +94,8 @@ export type Segment = TextSeg | ThinkingSeg | ImageSeg | ToolSeg
 export interface ChatMsg {
   key: string
   role: 'user' | 'assistant' | 'error'
+  /** 消息时刻（epoch ms）：历史取 jsonl timestamp，实时取到达时刻。算「已工作 Ns」用（M49） */
+  ts: number | null
   segments: Segment[]
   meta: string | null
   /** 这条消息是 subagent 的锚点：uuid 用来拉 /sidechains/:uuid（M17） */

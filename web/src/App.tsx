@@ -29,6 +29,13 @@ import { QuestionDialog } from './components/QuestionDialog'
 let keySeq = 0
 const nextKey = () => `m${++keySeq}`
 
+/** jsonl 的 ISO timestamp → epoch ms;缺失/坏值 → null */
+const parseTs = (v: string | null | undefined): number | null => {
+  if (typeof v !== 'string') return null
+  const n = Date.parse(v)
+  return Number.isNaN(n) ? null : n
+}
+
 const STATE_KEY = {
   idle: 'stateIdle',
   running: 'stateRunning',
@@ -74,9 +81,9 @@ export default function App() {
   const [turnStats, setTurnStats] = useState<TurnStatus['stats']>(null)
   const [sawContent, setSawContent] = useState(false)
 
-  const appendMsg = useCallback((m: Omit<ChatMsg, 'key'>): string => {
+  const appendMsg = useCallback((m: Omit<ChatMsg, 'key' | 'ts'>): string => {
     const key = nextKey()
-    setMsgs((prev) => [...prev, { ...m, key }])
+    setMsgs((prev) => [...prev, { ...m, key, ts: Date.now() }])
     return key
   }, [])
 
@@ -89,7 +96,7 @@ export default function App() {
         return prev
       }
       return [...prev, {
-        key: nextKey(), role: 'error', segments: [{ kind: 'text', text: full }], meta: null, sidechain: null,
+        key: nextKey(), role: 'error', ts: Date.now(), segments: [{ kind: 'text', text: full }], meta: null, sidechain: null,
       }]
     })
   }, [])
@@ -281,7 +288,7 @@ export default function App() {
             typeof m.uuid === 'string' && (m.sidechain_count ?? 0) > 0
               ? { uuid: m.uuid, count: m.sidechain_count! }
               : null
-          out.push({ key, role: 'assistant', segments, meta: m.model, sidechain })
+          out.push({ key, role: 'assistant', ts: parseTs(m.timestamp), segments, meta: m.model, sidechain })
         } else if (m.role === 'user') {
           // tool_result 回填到已登记的工具段（此时还没 setState，直接改本地数组）
           for (const r of toolResultsFromContent(content)) {
@@ -303,6 +310,7 @@ export default function App() {
             out.push({
               key: nextKey(),
               role: 'user',
+              ts: parseTs(m.timestamp),
               segments: [...(text !== '' ? [{ kind: 'text' as const, text }] : []), ...images],
               meta: null,
               sidechain: null,
@@ -343,7 +351,7 @@ export default function App() {
       // 草稿态创建的新会话：没有历史可拉（拉了还会覆盖乐观气泡），直接发首条。
       // 草稿里选过的模型/思考/权限先恢复显示（上面刚被重置），再按序应用 ——
       // 控制请求都确认后才发 prompt，保证首轮就用上。
-      setMsgs([{ key: nextKey(), role: 'user', segments: [{ kind: 'text', text: pending }], meta: null, sidechain: null }])
+      setMsgs([{ key: nextKey(), role: 'user', ts: Date.now(), segments: [{ kind: 'text', text: pending }], meta: null, sidechain: null }])
       if (setup?.model != null) setModelValue(setup.model)
       if (setup?.effort != null) setEffort(setup.effort)
       if (setup?.permMode != null) setPermMode(setup.permMode)
@@ -453,7 +461,7 @@ export default function App() {
               const model = message.model
               if (typeof model === 'string') setModelResolved(model)
               setMsgs((prev) => [...prev, {
-                key, role: 'assistant', segments,
+                key, role: 'assistant', ts: Date.now(), segments,
                 meta: typeof model === 'string' ? model : null,
                 sidechain: null,
               }])
@@ -473,6 +481,7 @@ export default function App() {
                 return [...prev, {
                   key: nextKey(),
                   role: 'user',
+                  ts: Date.now(),
                   segments: [...(text !== '' ? [{ kind: 'text' as const, text }] : []), ...images],
                   meta: null,
                   sidechain: null,
