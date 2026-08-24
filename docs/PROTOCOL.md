@@ -82,6 +82,22 @@ effort  session_id  userType  entrypoint  cwd  sessionId  version  gitBranch
 注意 `parentUuid` 构成消息树，`isSidechain: true` 是 subagent 的消息——
 渲染时要分开，否则 Task 跑起来时主线会混进一堆看不懂的对话。
 
+**subagent 的两种落盘格式**（M17 实测，基线 2.1.241）：
+
+- 旧格式：subagent 行混在主 jsonl 里（`isSidechain: true`，沿 `parentUuid`
+  锚到主线消息）。`parse.ts` 的 `sidechains` 按锚点 uuid 分组。
+- 新格式（2.1.241 本机实测）：主 jsonl 里 **没有** sidechain 行，subagent
+  转写独立存放：
+
+  ```
+  <slug>/<sessionId>/subagents/agent-<agentId>.jsonl       # 行结构同主转写，isSidechain: true
+  <slug>/<sessionId>/subagents/agent-<agentId>.meta.json   # 锚定关系在这
+  ```
+
+  meta.json：`{agentType, description, toolUseId, parentAgentId, spawnDepth}` ——
+  `toolUseId` 对应主转写里 Task/Agent 调用的 `tool_use.id`，这是唯一的锚。
+  实时流里对应帧的顶层 `parent_tool_use_id` 同 id。两种格式都要支持。
+
 每行还带 `cwd`：**resume 时引擎 spawn 的 `cwd` 必须设成它**，
 否则 CLAUDE.md、相对路径、git 上下文全错。新建会话则是用户指定的目录。
 

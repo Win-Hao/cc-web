@@ -60,7 +60,7 @@ export default function App() {
 
   const appendError = useCallback(
     (text: string) =>
-      appendMsg({ role: 'error', segments: [{ kind: 'text', text: `⚠ ${text}` }], meta: null }),
+      appendMsg({ role: 'error', segments: [{ kind: 'text', text: `⚠ ${text}` }], meta: null, sidechain: null }),
     [appendMsg],
   )
 
@@ -137,6 +137,37 @@ export default function App() {
     }
   }, [])
 
+  /** 新格式 subagent：按 meta.toolUseId 挂到对应工具段（M17） */
+  const loadSubagents = useCallback(async (id: string) => {
+    try {
+      const d = await api<{
+        agents: { agent_id: string; tool_use_id: string | null; agent_type: string | null; description: string | null }[]
+      }>(`/api/v1/sessions/${id}/subagents`)
+      const byTool = new Map<string, { id: string; label: string }>()
+      for (const a of d.agents) {
+        if (a.tool_use_id === null) continue
+        const label = `子代理 · ${a.agent_type ?? 'agent'}${a.description !== null ? ` · ${a.description}` : ''}`
+        byTool.set(a.tool_use_id, { id: a.agent_id, label: label.length > 60 ? `${label.slice(0, 60)}…` : label })
+      }
+      if (byTool.size === 0) return
+      setMsgs((prev) =>
+        prev.map((m) => {
+          if (!m.segments.some((seg) => seg.kind === 'tool' && seg.id !== null && byTool.has(seg.id))) return m
+          return {
+            ...m,
+            segments: m.segments.map((seg) =>
+              seg.kind === 'tool' && seg.id !== null && byTool.has(seg.id)
+                ? { ...seg, agent: byTool.get(seg.id)! }
+                : seg,
+            ),
+          }
+        }),
+      )
+    } catch {
+      // subagent 视图是锦上添花，拿不到不打扰
+    }
+  }, [])
+
   const loadHistory = useCallback(async (id: string) => {
     try {
       const d = await api<{ messages: HistoryMessage[] }>(`/api/v1/sessions/${id}/history?limit=100`)
@@ -151,7 +182,11 @@ export default function App() {
           segments.forEach((seg, si) => {
             if (seg.kind === 'tool' && seg.id !== null) toolLocRef.current.set(seg.id, { key, si })
           })
-          out.push({ key, role: 'assistant', segments, meta: m.model })
+          const sidechain =
+            typeof m.uuid === 'string' && (m.sidechain_count ?? 0) > 0
+              ? { uuid: m.uuid, count: m.sidechain_count! }
+              : null
+          out.push({ key, role: 'assistant', segments, meta: m.model, sidechain })
         } else if (m.role === 'user') {
           // tool_result 回填到已登记的工具段（此时还没 setState，直接改本地数组）
           for (const r of toolResultsFromContent(content)) {
@@ -167,15 +202,16 @@ export default function App() {
           }
           const text = textOfSegments(segmentsFromContent(content))
           if (text !== '') {
-            out.push({ key: nextKey(), role: 'user', segments: [{ kind: 'text', text }], meta: null })
+            out.push({ key: nextKey(), role: 'user', segments: [{ kind: 'text', text }], meta: null, sidechain: null })
           }
         }
       }
       setMsgs(out)
+      void loadSubagents(id)
     } catch (e) {
       appendError((e as Error).message)
     }
-  }, [appendError])
+  }, [appendError, loadSubagents])
 
   /* ── 选中会话：历史 + WS 订阅（断线每 3s 重连，接回后补历史/用量）── */
   useEffect(() => {
@@ -210,6 +246,28 @@ export default function App() {
         }
         case 'message': {
           const message = data.message as Record<string, unknown> | undefined
+          // subagent 的实时帧（M17）：不进主流，计数归到发起它的工具行（Task 等）
+          const parentTool = data.parent_tool_use_id
+          if (typeof parentTool === 'string' && (data.type === 'assistant' || data.type === 'user')) {
+            const loc = toolLocRef.current.get(parentTool)
+            if (loc !== undefined) {
+              setMsgs((prev) =>
+                prev.map((m) =>
+                  m.key !== loc.key
+                    ? m
+                    : {
+                        ...m,
+                        segments: m.segments.map((seg, si) =>
+                          si === loc.si && seg.kind === 'tool'
+                            ? { ...seg, subCount: seg.subCount + 1 }
+                            : seg,
+                        ),
+                      },
+                ),
+              )
+            }
+            break
+          }
           if (data.type === 'assistant' && message !== undefined) {
             const segments = segmentsFromContent(message.content)
             if (segments.length > 0) {
@@ -222,6 +280,7 @@ export default function App() {
               setMsgs((prev) => [...prev, {
                 key, role: 'assistant', segments,
                 meta: typeof model === 'string' ? model : null,
+                sidechain: null,
               }])
             }
           } else if (data.type === 'user' && message !== undefined) {
@@ -234,12 +293,13 @@ export default function App() {
                 if (last !== undefined && last.role === 'user' && textOfSegments(last.segments) === text) {
                   return prev
                 }
-                return [...prev, { key: nextKey(), role: 'user', segments: [{ kind: 'text', text }], meta: null }]
+                return [...prev, { key: nextKey(), role: 'user', segments: [{ kind: 'text', text }], meta: null, sidechain: null }]
               })
             }
           } else if (data.type === 'result') {
             setStream('')
             void loadUsage(sessionId)
+            void loadSubagents(sessionId) // 本轮新 spawn 的 subagent 落盘了，补锚点
           }
           break
         }
@@ -292,7 +352,7 @@ export default function App() {
       if (retry !== null) clearTimeout(retry)
       ws?.close()
     }
-  }, [sessionId, appendError, loadHistory, loadUsage, loadModels, patchToolResults])
+  }, [sessionId, appendError, loadHistory, loadUsage, loadModels, loadSubagents, patchToolResults])
 
   const selectSession = useCallback((id: string) => {
     setSessionId(id)
@@ -302,7 +362,7 @@ export default function App() {
   const sendPrompt = useCallback(
     (text: string) => {
       if (sessionId === null) return
-      appendMsg({ role: 'user', segments: [{ kind: 'text', text }], meta: null })
+      appendMsg({ role: 'user', segments: [{ kind: 'text', text }], meta: null, sidechain: null })
       post(`/api/v1/sessions/${sessionId}/prompt`, { text }).catch((e: Error) => appendError(e.message))
     },
     [sessionId, appendMsg, appendError],
@@ -426,7 +486,7 @@ export default function App() {
           </select>
           {usage !== '' && <span className="topbar-usage">{usage}</span>}
         </header>
-        <Chat messages={msgs} streamText={stream} hasSession={sessionId !== null} />
+        <Chat messages={msgs} streamText={stream} hasSession={sessionId !== null} sessionId={sessionId} />
         <Composer
           disabled={sessionId === null}
           running={state !== 'idle'}

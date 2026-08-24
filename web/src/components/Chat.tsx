@@ -7,6 +7,7 @@ import { useEffect, useRef } from 'react'
 import type { ChatMsg, ToolSeg } from '../types'
 import { textOfSegments } from '../lib/segments'
 import { Markdown } from './Markdown'
+import { SidechainBlock } from './SidechainBlock'
 
 function ToolRow({ seg }: { seg: ToolSeg }) {
   const expandable = seg.detail !== '' || (seg.result !== null && seg.result !== '')
@@ -16,6 +17,7 @@ function ToolRow({ seg }: { seg: ToolSeg }) {
         <span className="tool-status" />
         <span className="tool-name">{seg.name}</span>
         <span className="tool-sum">{seg.summary}</span>
+        {seg.subCount > 0 && <span className="tool-sub">子代理 {seg.subCount} 条</span>}
       </summary>
       {expandable && (
         <div className="tool-detail">
@@ -33,9 +35,10 @@ interface Props {
   messages: ChatMsg[]
   streamText: string
   hasSession: boolean
+  sessionId: string | null
 }
 
-export function Chat({ messages, streamText, hasSession }: Props) {
+export function Chat({ messages, streamText, hasSession, sessionId }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -65,8 +68,22 @@ export function Chat({ messages, streamText, hasSession }: Props) {
                     <div className="msg" key={i}><Markdown text={seg.text} /></div>
                   )
                 ) : (
-                  <ToolRow seg={seg} key={i} />
+                  <div key={i}>
+                    <ToolRow seg={seg} />
+                    {seg.agent !== null && sessionId !== null && (
+                      <SidechainBlock
+                        fetchPath={`/api/v1/sessions/${sessionId}/subagents/${seg.agent.id}`}
+                        label={seg.agent.label}
+                      />
+                    )}
+                  </div>
                 ),
+              )}
+              {m.sidechain !== null && sessionId !== null && (
+                <SidechainBlock
+                  fetchPath={`/api/v1/sessions/${sessionId}/sidechains/${m.sidechain.uuid}`}
+                  label={`子代理 · ${m.sidechain.count} 条`}
+                />
               )}
               {m.meta !== null && <div className="a-meta">{m.meta}</div>}
             </div>

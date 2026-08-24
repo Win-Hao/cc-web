@@ -50,6 +50,8 @@ export function segmentsFromContent(content: unknown): Segment[] {
         detail: toolDetail(blk.input),
         status: 'pending',
         result: null,
+        subCount: 0,
+        agent: null,
       })
     } else if (blk.type === 'image') {
       out.push({ kind: 'text', text: '[图片]' })

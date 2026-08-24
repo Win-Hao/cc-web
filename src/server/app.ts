@@ -17,7 +17,8 @@ import { listSessions } from '#/sessions/list.js'
 import { findSessionFile } from '#/sessions/find.js'
 import { parseSessionFile } from '#/sessions/parse.js'
 import { aggregateSessionUsage } from '#/usage/aggregate.js'
-import { paginate } from './history.js'
+import { findSubagentFile, listSubagents } from '#/sessions/subagents.js'
+import { normalizeMessage, paginate } from './history.js'
 import { SessionBusyError, ControlRequestError, ApprovalExpiredError } from './registry.js'
 import type { SessionRegistry } from './registry.js'
 import { bearerAuth } from '#/auth/middleware.js'
@@ -137,7 +138,45 @@ export function createApp(deps: AppDeps) {
       limit,
       ...(before !== undefined && Number.isFinite(before) ? { before } : {}),
     })
-    return c.json(ok(page))
+    // M17：主线消息若是 subagent 的锚点，带上计数 —— 前端据此显示
+    // 「子代理 · N 条」，点开再拉 /sidechains/:uuid
+    const messages = page.messages.map((m) => {
+      const count = m.uuid !== null ? (parsed.sidechains[m.uuid]?.length ?? 0) : 0
+      return count > 0 ? { ...m, sidechain_count: count } : m
+    })
+    return c.json(ok({ ...page, messages }))
+  })
+
+  /** M17（新格式）：会话的 subagent 列表 —— toolUseId 锚到工具行 */
+  app.get('/api/v1/sessions/:id/subagents', async (c) => {
+    const file = await findSessionFile(deps.projectsRoot, c.req.param('id'))
+    if (file === null) return c.json(ok({ agents: [] })) // 新会话还没落盘也别报错
+    return c.json(ok({ agents: await listSubagents(file) }))
+  })
+
+  /** M17（新格式）：单个 subagent 的转写，形状同 history 的 messages */
+  app.get('/api/v1/sessions/:id/subagents/:agentId', async (c) => {
+    const file = await findSessionFile(deps.projectsRoot, c.req.param('id'))
+    if (file === null) return c.json(fail(40401, 'session not found'))
+    const agentFile = await findSubagentFile(file, c.req.param('agentId'))
+    if (agentFile === null) return c.json(ok({ messages: [] }))
+    const parsed = await parseSessionFile(agentFile)
+    // agent 文件里全是 isSidechain 行，mainline 为空 —— 按行序给 entries
+    const messages = parsed.entries
+      .filter((e) => e.type === 'user' || e.type === 'assistant')
+      .map(normalizeMessage)
+    return c.json(ok({ messages }))
+  })
+
+  /** M17（旧格式）：某条主线消息锚定的 subagent 消息（R8 的分组），形状同 history */
+  app.get('/api/v1/sessions/:id/sidechains/:uuid', async (c) => {
+    const file = await findSessionFile(deps.projectsRoot, c.req.param('id'))
+    if (file === null) return c.json(fail(40401, 'session not found'))
+    const uuid = c.req.param('uuid')
+    if (!/^[a-zA-Z0-9-]+$/.test(uuid)) return c.json(ok({ messages: [] }))
+    const parsed = await parseSessionFile(file)
+    const group = parsed.sidechains[uuid] ?? []
+    return c.json(ok({ messages: group.map(normalizeMessage) }))
   })
 
   app.post('/api/v1/sessions/:id/prompt', async (c) => {

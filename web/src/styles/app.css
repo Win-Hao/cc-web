@@ -578,3 +578,47 @@
 .q-opt-main { display: flex; flex-direction: column; min-width: 0; }
 .q-opt-label { font-size: var(--ui-font-size-sm); font-weight: 500; }
 .q-opt-desc { font-size: var(--text-xs); color: var(--color-text-muted); }
+
+/* ── subagent/sidechain 视图（M17）── */
+.tool-sub {
+  flex: none;
+  font-size: var(--text-xs);
+  color: var(--color-accent);
+  background: var(--color-accent-soft);
+  border-radius: var(--radius-full);
+  padding: 0 8px;
+}
+.side-block { margin-top: 8px; }
+.side-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-accent-bd);
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  font-size: var(--text-xs);
+}
+.side-toggle:hover { background: var(--color-accent-bd); }
+.side-arrow { font-size: 10px; }
+.side-msgs {
+  margin-top: 8px;
+  padding: 4px 0 4px 12px;
+  border-left: 2px solid var(--color-accent-bd);
+}
+.side-msg { margin-top: 8px; }
+.side-msg:first-child { margin-top: 0; }
+.side-msg .msg { font-size: var(--ui-font-size-sm); }
+.side-user {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: var(--radius-md);
+  background: var(--color-surface-sunken);
+  border: 1px solid var(--color-line);
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.side-note { font-size: var(--text-xs); color: var(--color-text-faint); padding: 4px 0; }
