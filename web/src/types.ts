@@ -84,7 +84,8 @@ export interface ToolSeg {
   summary: string
   /** 展开看的完整入参（JSON pretty，已截断） */
   detail: string
-  status: 'pending' | 'ok' | 'error'
+  /** canceled = 回合已结束但 tool_result 一直没来（被中断），不再转 spinner（M52） */
+  status: 'pending' | 'ok' | 'error' | 'canceled'
   /** 原始入参（M48 工具卡片按 family 取字段：file_path/pattern/url…） */
   input: unknown
   result: string | null

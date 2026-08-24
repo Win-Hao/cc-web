@@ -3,7 +3,7 @@
  * 用户消息 = 右对齐软 accent 气泡；助手消息 = 文本段 + 工具行交错。
  */
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Check, ChevronRight, LoaderCircle, Sparkles, X } from 'lucide-react'
+import { Ban, Check, ChevronRight, LoaderCircle, Sparkles, X } from 'lucide-react'
 import type { ChatMsg, ImageRef, StreamTool, ToolSeg, TurnStatus } from '../types'
 import { formatElapsedMs } from '../lib/format'
 import { textOfSegments } from '../lib/segments'
@@ -178,13 +178,21 @@ function StatusTile({ status, pending }: { status: ToolSeg['status']; pending: b
     <span
       className={cn(
         'flex size-6 shrink-0 items-center justify-center rounded-md border bg-background',
-        pending ? 'border-primary text-primary' : status === 'error' ? 'text-destructive' : 'text-success',
+        pending
+          ? 'border-primary text-primary'
+          : status === 'error'
+            ? 'text-destructive'
+            : status === 'canceled'
+              ? 'text-faint'
+              : 'text-success',
       )}
     >
       {pending ? (
         <LoaderCircle className="cc-icon-spin size-3.5" />
       ) : status === 'error' ? (
         <X className="size-3.5" />
+      ) : status === 'canceled' ? (
+        <Ban className="size-3.5" />
       ) : (
         <Check className="size-3.5" />
       )}
@@ -341,15 +349,22 @@ function ToolGroupCard({ segs, children }: { segs: ToolSeg[]; children: React.Re
   const [open, setOpen] = useState(false)
   const running = segs.some((sg) => sg.status === 'pending')
   const hasError = segs.some((sg) => sg.status === 'error')
+  const hasCanceled = segs.some((sg) => sg.status === 'canceled')
   const verb = familyTitle(segs[0]!)
-  const tail = hasError ? t('toolError') : running ? t('toolRunning') : t('toolDone')
+  const tail = hasError
+    ? t('toolError')
+    : running
+      ? t('toolRunning')
+      : hasCanceled
+        ? t('toolCanceled')
+        : t('toolDone')
   return (
     <div className="mt-2">
       <button
         className="flex w-full cursor-pointer items-center gap-1.5 rounded-md py-0.5 pr-2 pl-0.5 text-left text-[13px] select-none hover:bg-secondary/60"
         onClick={() => setOpen((o) => !o)}
       >
-        <StatusTile pending={running} status={hasError ? 'error' : 'ok'} />
+        <StatusTile pending={running} status={hasError ? 'error' : hasCanceled ? 'canceled' : 'ok'} />
         <span className={cn('min-w-0 flex-1 truncate font-medium text-muted-foreground', running && 'shimmer-text')}>
           {`${verb} ×${segs.length}, ${tail}`}
         </span>
@@ -475,7 +490,9 @@ function buildNodes(items: RenderItem[], liveTailOpen: boolean): Node[] {
       userTs !== null && endTs !== null && endTs > userTs ? Math.max(1, Math.round((endTs - userTs) / 1000)) : null
     const canceled = work.some((it) => {
       const msgs = it.kind === 'msg' ? [it.m] : it.msgs
-      return msgs.some((wm) => wm.segments.some((sg) => sg.kind === 'tool' && sg.status === 'pending'))
+      return msgs.some((wm) =>
+        wm.segments.some((sg) => sg.kind === 'tool' && (sg.status === 'pending' || sg.status === 'canceled')),
+      )
     })
     nodes.push({ kind: 'turn', key: `turn-${acc[0]!.kind === 'msg' ? acc[0]!.m.key : acc[0]!.key}`, work, finals, seconds, canceled })
   }

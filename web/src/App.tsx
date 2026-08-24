@@ -321,6 +321,13 @@ export default function App() {
         }
       }
     }
+    // 历史里还停在 pending 的工具 = 那一轮被中断，result 永远不会来 ——
+    // 标成 canceled，渲染层不再转 spinner（M52）
+    for (const m of out) {
+      for (const sg of m.segments) {
+        if (sg.kind === 'tool' && sg.status === 'pending') sg.status = 'canceled'
+      }
+    }
     return out
   }, [])
 
@@ -436,6 +443,22 @@ export default function App() {
           } else if (next === 'idle') {
             turnStartRef.current = null
             setTurnStart(null)
+            setStreamTools([])
+            // 回合结束仍 pending 的工具 → canceled（中断后 result 不会来）
+            setMsgs((prev) =>
+              prev.map((m) =>
+                m.segments.some((sg) => sg.kind === 'tool' && sg.status === 'pending')
+                  ? {
+                      ...m,
+                      segments: m.segments.map((sg) =>
+                        sg.kind === 'tool' && sg.status === 'pending'
+                          ? { ...sg, status: 'canceled' as const }
+                          : sg,
+                      ),
+                    }
+                  : m,
+              ),
+            )
           }
           break
         }
