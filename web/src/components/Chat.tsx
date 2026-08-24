@@ -2,7 +2,7 @@
  * 对话流：白底阅读面，内容列居中 max-w-[760px]。
  * 用户消息 = 右对齐软 accent 气泡；助手消息 = 文本段 + 工具行交错。
  */
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Ban, Check, ChevronRight, LoaderCircle, Sparkles, X } from 'lucide-react'
 import type { ChatMsg, ImageRef, StreamTool, ToolSeg, TurnStatus } from '../types'
 import { formatElapsedMs } from '../lib/format'
@@ -12,13 +12,44 @@ import { SidechainBlock } from './SidechainBlock'
 import { cn } from '@/lib/utils'
 import { t, useLang } from '../lib/i18n'
 
+/** 点击缩略图 → 灯箱放大（M53）。Provider 挂在 Chat 根上。 */
+const LightboxCtx = createContext<(img: ImageRef) => void>(() => {})
+
 function Thumb({ image }: { image: ImageRef }) {
+  const open = useContext(LightboxCtx)
   return (
     <img
       alt=""
-      className="max-h-72 max-w-full rounded-lg border object-contain"
+      className="max-h-72 max-w-full cursor-zoom-in rounded-lg border object-contain transition-opacity hover:opacity-90"
       src={`data:${image.mediaType};base64,${image.data}`}
+      onClick={(e) => {
+        e.stopPropagation()
+        open(image)
+      }}
     />
+  )
+}
+
+/** 全屏灯箱：点任意处 / Esc 关闭 */
+function Lightbox({ image, onClose }: { image: ImageRef; onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+  return (
+    <div
+      className="fixed inset-0 z-50 flex cursor-zoom-out items-center justify-center bg-black/80 p-6 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <img
+        alt=""
+        className="max-h-full max-w-full rounded-lg object-contain shadow-2xl"
+        src={`data:${image.mediaType};base64,${image.data}`}
+      />
+    </div>
   )
 }
 
@@ -540,6 +571,7 @@ export function Chat({
 }: Props) {
   useLang()
   const scrollRef = useRef<HTMLDivElement>(null)
+  const [lightbox, setLightbox] = useState<ImageRef | null>(null)
   /** 前插锚点（M51）：点「加载更早」时记录滚动位置，插完还原，不跳底 */
   const prependRef = useRef<{ h: number; top: number } | null>(null)
   const nodes = useMemo(
@@ -640,6 +672,7 @@ export function Chat({
   }
 
   return (
+    <LightboxCtx.Provider value={setLightbox}>
     <div className="min-h-0 flex-1 overflow-y-auto" ref={scrollRef}>
       <div className="mx-auto flex max-w-[760px] flex-col px-4 pt-4 pb-5">
         {hasEarlier && (
@@ -685,5 +718,7 @@ export function Chat({
         <TurnFooter turn={turn} />
       </div>
     </div>
+    {lightbox !== null && <Lightbox image={lightbox} onClose={() => setLightbox(null)} />}
+    </LightboxCtx.Provider>
   )
 }
