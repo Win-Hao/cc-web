@@ -98,7 +98,7 @@ export async function run(argv: string[], deps: CliDeps): Promise<CliResult> {
  */
 export function buildEngineArgs(
   caps: ClaudeCapabilities,
-  opts: { resume?: string; newSessionId?: string },
+  opts: { resume?: string; newSessionId?: string; fork?: boolean },
 ): string[] {
   const args = ['-p', '--verbose', '--input-format', 'stream-json', '--output-format', 'stream-json']
   if (caps.partialMessages) args.push('--include-partial-messages')
@@ -110,6 +110,7 @@ export function buildEngineArgs(
     args.push('--session-id', opts.newSessionId)
   } else if (opts.resume !== undefined) {
     args.push('--resume', opts.resume)
+    if (opts.fork === true) args.push('--fork-session') // M55：分叉，新 id 由 CC 发
   }
   return args
 }
@@ -123,6 +124,16 @@ export function buildEngineArgs(
 function defaultFactory(projectsRoot: string): EngineFactory {
   return async (sessionId, opts) => {
     const caps = await probeClaudeCapabilities('claude') // 进程内只探测一次
+    if (opts?.forkFrom !== undefined) {
+      // 分叉（M55）：resume 旧会话 + --fork-session，cwd 沿用旧会话的
+      const file = await findSessionFile(projectsRoot, opts.forkFrom)
+      const cwd = file !== null ? await readSessionCwd(file) : null
+      return new Engine({
+        bin: 'claude',
+        args: buildEngineArgs(caps, { resume: opts.forkFrom, fork: true }),
+        ...(cwd !== null ? { cwd } : {}),
+      })
+    }
     if (opts?.newSessionCwd !== undefined) {
       return new Engine({
         bin: 'claude',

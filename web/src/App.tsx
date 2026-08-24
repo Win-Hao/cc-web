@@ -362,6 +362,8 @@ export default function App() {
       })
       void loadSubagents(id)
     } catch (e) {
+      // 分叉/刚创建的会话 jsonl 未落盘 —— 空历史是正常态，不报错
+      if ((e as Error).message.includes('not found')) return
       appendError((e as Error).message)
     }
   }, [appendError, buildHistoryMsgs, sweepPending, loadSubagents])
@@ -682,6 +684,29 @@ export default function App() {
     history.replaceState(null, '', `?session=${id}`)
   }, [])
 
+  /** 分叉会话（M55）：新 id 由 CC 发；jsonl 首条消息才落盘 → 先乐观进侧栏 */
+  const forkSession = useCallback(
+    async (s: SessionSummary) => {
+      try {
+        const d = await post<{ session_id: string }>(`/api/v1/sessions/${s.session_id}/fork`, {})
+        setSessions((prev) => [
+          {
+            session_id: d.session_id,
+            project_slug: '',
+            cwd: s.cwd,
+            first_message: `${sessionTitle(s)}${t('forkedSuffix')}`,
+            mtime_ms: Date.now(),
+          },
+          ...prev,
+        ])
+        selectSession(d.session_id)
+      } catch (e) {
+        appendError((e as Error).message)
+      }
+    },
+    [selectSession, appendError],
+  )
+
   const sendPrompt = useCallback(
     (text: string, images: ImageRef[] = []) => {
       if (sessionId === null) return
@@ -836,6 +861,8 @@ export default function App() {
         activeId={sessionId}
         onSelect={selectSession}
         onNewSession={enterDraft}
+        onFork={(s) => void forkSession(s)}
+        onRefresh={() => void refreshSessions().catch(() => {})}
       />
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex min-h-[50px] flex-wrap items-center gap-3 border-b px-4 py-2.5">

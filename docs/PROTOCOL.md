@@ -40,7 +40,7 @@ claude -p --verbose \
 | `--replay-user-messages` | 把收到的 stdin 回显到 stdout 确认（可选，调试好用） |
 | `-r, --resume <id>` | 按 session id 续接 |
 | `--session-id <uuid>` | 指定新会话 id（必须合法 UUID） |
-| `--fork-session` | resume 时另开新 id |
+| `--fork-session` | resume 时另开新 id。**新 id 从首个 stdout 帧的顶层 `session_id` 读**（M55 真机实测：spawn 后立即有 system/hook_started 之类的帧带新 id，不用等 init）；新会话 jsonl 到首条消息才落盘 |
 | `--model` | 初始模型（切换用控制协议） |
 
 ## 2. 会话文件 ✅

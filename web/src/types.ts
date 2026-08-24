@@ -6,6 +6,8 @@ export interface SessionSummary {
   mtime_ms: number
   /** 运行状态（M54 侧栏指示）；老服务器没有该字段 → undefined 当 idle */
   state?: SessionState
+  /** 自定义名（M55 重命名，server sidecar）；null/缺省 → 用首条消息 */
+  name?: string | null
 }
 
 export interface HistoryMessage {

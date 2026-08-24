@@ -23,7 +23,14 @@ export function groupName(s: SessionSummary): string {
 }
 
 export const sessionTitle = (s: SessionSummary): string =>
-  s.first_message ?? s.session_id.slice(0, 8)
+  s.name ?? s.first_message ?? s.session_id.slice(0, 8)
+
+/** 右键菜单 footer 的完整时间（M55）：2026-08-24 23:51 */
+export function fmtDateTime(ms: number): string {
+  const d = new Date(ms)
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+}
 
 /** 运行耗时：<60s 一位小数（<10s）或整数；≥60s → "1m 04s"（M47） */
 export function formatElapsedMs(ms: number): string {

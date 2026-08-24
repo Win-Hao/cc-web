@@ -41,6 +41,8 @@ export interface EngineLike extends EventEmitter {
 export interface EngineFactoryOptions {
   /** 只在「新建会话」时出现：新会话的工作目录，工厂据此走 --session-id 分支 */
   newSessionCwd?: string
+  /** 分叉（M55）：--resume <此 id> --fork-session，新 id 由 CC 发、从首帧读回 */
+  forkFrom?: string
 }
 
 export type EngineFactory = (
@@ -175,6 +177,61 @@ export class SessionRegistry {
     if (existing !== undefined) return existing
 
     const engine = await this.factory(sessionId, opts)
+    this.wire(sessionId, engine)
+    await engine.start()
+    this.touch(sessionId)
+    this.trackPool(sessionId, engine)
+    return engine
+  }
+
+  /**
+   * 分叉会话（M55）：CC 用 --resume <old> --fork-session 自己发新 id，
+   * 我们从首个带 session_id 的 stdout 帧读回来，再把引擎登记到新 id 下。
+   */
+  async fork(sessionId: string, timeoutMs = 15_000): Promise<string> {
+    const engine = await this.factory(sessionId, { forkFrom: sessionId })
+    let cleanup = () => {}
+    const idPromise = new Promise<string>((resolve, reject) => {
+      const onMsg = (frame: unknown) => {
+        const sid =
+          typeof frame === 'object' && frame !== null
+            ? (frame as Record<string, unknown>).session_id
+            : undefined
+        if (typeof sid === 'string' && sid !== '') resolve(sid)
+      }
+      const onErr = (err: Error) => reject(err)
+      const onExit = () => reject(new Error('engine exited before reporting forked session id'))
+      const timer = setTimeout(
+        () => reject(new Error('timed out waiting for forked session id')),
+        timeoutMs,
+      )
+      engine.on('message', onMsg)
+      engine.on('error', onErr)
+      engine.on('exit', onExit)
+      cleanup = () => {
+        clearTimeout(timer)
+        engine.off('message', onMsg)
+        engine.off('error', onErr)
+        engine.off('exit', onExit)
+      }
+    })
+    try {
+      await engine.start()
+      const newId = await idPromise
+      cleanup()
+      this.wire(newId, engine)
+      this.touch(newId)
+      this.trackPool(newId, engine)
+      return newId
+    } catch (err) {
+      cleanup()
+      void engine.stop()
+      throw err
+    }
+  }
+
+  /** 引擎接线（从 ensure 抽出）：事件路由 + 生命周期清理，不含 start */
+  private wire(sessionId: string, engine: EngineLike): void {
     this.engines.set(sessionId, engine)
     engine.on('message', (frame) => {
       this.touch(sessionId)
@@ -221,10 +278,10 @@ export class SessionRegistry {
       this.states.delete(sessionId)
       this.hub.prune(sessionId)
     })
-    await engine.start()
-    this.touch(sessionId)
-    // 登记进空闲回收池：state / lastActivityAt 用 getter 反映 registry 实时值，
-    // 池只对「idle 且超时」的引擎 stop()（ARCHITECTURE：默认 15 分钟）
+  }
+
+  /** 登记进空闲回收池：state / lastActivityAt 用 getter 反映 registry 实时值 */
+  private trackPool(sessionId: string, engine: EngineLike): void {
     const registry = this
     this.pool?.track(sessionId, {
       get state() {
@@ -235,7 +292,6 @@ export class SessionRegistry {
       },
       stop: () => engine.stop(),
     })
-    return engine
   }
 
   /**

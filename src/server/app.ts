@@ -8,10 +8,10 @@
  */
 import { Hono } from 'hono'
 import { randomUUID } from 'node:crypto'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { readdir, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { expandHome } from '#/sessions/slug.js'
 import { listSessions } from '#/sessions/list.js'
@@ -36,6 +36,8 @@ export interface AppDeps {
   planTtlMs?: number
   /** React 前端的构建产物目录（vite build 的 dist/web）；测试注入临时目录 */
   webRoot?: string
+  /** 自定义会话名 sidecar（M55 重命名）；默认 ~/.cc-web/session-names.json */
+  namesPath?: string
 }
 
 const HISTORY_DEFAULT_LIMIT = 50
@@ -84,6 +86,21 @@ const ASSET_TYPES: Record<string, string> = {
 
 export function createApp(deps: AppDeps) {
   const app = new Hono()
+
+  /* 会话自定义名（M55）：jsonl 不存标题（PROTOCOL §2），存我们自己的 sidecar */
+  const namesPath = deps.namesPath ?? join(homedir(), '.cc-web', 'session-names.json')
+  const readNames = (): Record<string, string> => {
+    try {
+      const parsed: unknown = JSON.parse(readFileSync(namesPath, 'utf8'))
+      return typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, string>) : {}
+    } catch {
+      return {}
+    }
+  }
+  const writeNames = (names: Record<string, string>): void => {
+    mkdirSync(dirname(namesPath), { recursive: true })
+    writeFileSync(namesPath, JSON.stringify(names, null, 2))
+  }
 
   if (deps.token !== undefined) app.use('/api/v1/*', bearerAuth(deps.token))
 
@@ -211,10 +228,12 @@ export function createApp(deps: AppDeps) {
 
   app.get('/api/v1/sessions', async (c) => {
     const sessions = await listSessions(deps.projectsRoot)
-    // M54：带上每个会话的运行状态 —— 侧栏能看到别的会话在跑
+    // M54 state：侧栏运行指示；M55 name：自定义名（sidecar）
+    const names = readNames()
     const withState = sessions.map((s) => ({
       ...s,
       state: deps.registry?.state(s.session_id) ?? 'idle',
+      name: names[s.session_id] ?? null,
     }))
     return c.json(ok({ sessions: withState }))
   })
@@ -230,6 +249,70 @@ export function createApp(deps: AppDeps) {
     const limit = Number.isInteger(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 50) : 20
     const hits = await searchSessions(deps.projectsRoot, q, { limit })
     return c.json(ok({ hits }))
+  })
+
+  /** M55：重命名（空名清除）。名字只存 sidecar，不碰 jsonl。 */
+  app.post('/api/v1/sessions/:id/name', async (c) => {
+    const body: unknown = await c.req.json().catch(() => null)
+    const raw = typeof body === 'object' && body !== null ? (body as Record<string, unknown>).name : null
+    if (typeof raw !== 'string') return c.json(fail(40001, 'name required (empty string clears)'))
+    const name = raw.trim()
+    const names = readNames()
+    const id = c.req.param('id')
+    if (name === '') delete names[id]
+    else names[id] = name.slice(0, 120)
+    writeNames(names)
+    return c.json(ok({ name: name === '' ? null : names[id] }))
+  })
+
+  /** M55：分叉会话。CC --fork-session 发新 id，同步返回。 */
+  app.post('/api/v1/sessions/:id/fork', async (c) => {
+    if (deps.registry === undefined) return c.json(fail(50001, 'registry not configured'))
+    try {
+      const newId = await deps.registry.fork(c.req.param('id'))
+      return c.json(ok({ session_id: newId }))
+    } catch (err) {
+      return c.json(fail(50003, err instanceof Error ? err.message : 'fork failed'))
+    }
+  })
+
+  /** M55：导出会话为 Markdown（主线 user/assistant，工具行内联注记）。 */
+  app.get('/api/v1/sessions/:id/export', async (c) => {
+    const file = await findSessionFile(deps.projectsRoot, c.req.param('id'))
+    if (file === null) return c.json(fail(40401, 'session not found'))
+    const parsed = await parseSessionFile(file)
+    const lines: string[] = []
+    for (const e of parsed.mainline) {
+      const msg = e.message as { role?: string; content?: unknown } | null
+      if (msg === null) continue
+      const role = msg.role === 'user' ? '用户' : '助手'
+      const parts: string[] = []
+      const content = msg.content
+      if (typeof content === 'string') {
+        if (content.trim() !== '') parts.push(content)
+      } else if (Array.isArray(content)) {
+        for (const b of content) {
+          if (typeof b !== 'object' || b === null) continue
+          const blk = b as Record<string, unknown>
+          if (blk.type === 'text' && typeof blk.text === 'string' && blk.text !== '') parts.push(blk.text)
+          else if (blk.type === 'tool_use' && typeof blk.name === 'string') {
+            const input = blk.input as Record<string, unknown> | undefined
+            const hint =
+              typeof input?.description === 'string' ? input.description
+              : typeof input?.command === 'string' ? input.command
+              : typeof input?.file_path === 'string' ? input.file_path
+              : ''
+            parts.push(`> 🔧 ${blk.name}${hint !== '' ? `：${String(hint).slice(0, 120)}` : ''}`)
+          } else if (blk.type === 'image') parts.push('> [图片]')
+        }
+      }
+      if (parts.length === 0) continue
+      lines.push(`## ${role}`, '', ...parts, '')
+    }
+    const md = lines.join('\n')
+    c.header('content-type', 'text/markdown; charset=utf-8')
+    c.header('content-disposition', `attachment; filename="${c.req.param('id')}.md"`)
+    return c.body(md)
   })
 
   /** M12：新建会话。cwd 必须是存在的目录；session id 由服务器发（--session-id）。 */
