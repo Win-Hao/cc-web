@@ -16,6 +16,7 @@ import { Separator } from '@/components/ui/separator'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import { FolderDialog } from './FolderDialog'
+import { t, useLang } from '../lib/i18n'
 import { ModelPicker } from './ModelPicker'
 import type { ModelOption } from '../types'
 
@@ -55,6 +56,7 @@ export function DraftView({
   projects, defaultCwd, onSend,
   permMode, onPermMode, models, modelValue, effort, onModel, onEffort, onModelMenuOpen,
 }: Props) {
+  useLang()
   const [cwd, setCwd] = useState<string | null>(defaultCwd ?? projects[0]?.cwd ?? null)
   const [menuOpen, setMenuOpen] = useState(false)
   const [folderDialog, setFolderDialog] = useState(false)
@@ -94,7 +96,7 @@ export function DraftView({
     <div className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto p-4">
       <div className="mb-5 text-center select-none">
         <div className="font-mono text-[34px] leading-tight font-bold tracking-tight">cc-web</div>
-        <div className="mt-2 text-[13px] text-muted-foreground">还没有消息 —— 在下方输入开始对话</div>
+        <div className="mt-2 text-[13px] text-muted-foreground">{t('draftHint')}</div>
       </div>
       <div className="w-[min(720px,94%)]">
         <div className="rounded-[24px] border bg-background shadow-md transition-shadow focus-within:border-primary focus-within:ring-[3px] focus-within:ring-ring">
@@ -103,7 +105,7 @@ export function DraftView({
             rows={2}
             autoFocus
             value={text}
-            placeholder="输入消息…"
+            placeholder={t('draftPlaceholder')}
             className="max-h-64 min-h-[90px] px-4 pt-3.5 pb-1"
             onChange={(e) => {
               setText(e.target.value)
@@ -143,7 +145,7 @@ export function DraftView({
               onEffort={onEffort}
               onOpen={onModelMenuOpen}
             />
-            <Button size="icon" title="发送" disabled={text.trim() === '' || cwd === null} onClick={send}>
+            <Button size="icon" title={t('send')} disabled={text.trim() === '' || cwd === null} onClick={send}>
               <ArrowUp className="size-4" />
             </Button>
           </div>
@@ -156,12 +158,12 @@ export function DraftView({
             <PopoverTrigger asChild>
               <Button variant="ghost" size="sm" className="gap-1.5 text-muted-foreground hover:text-foreground">
                 <Folder className="size-3.5" />
-                <span className="max-w-[260px] truncate">{cwdName ?? '选择项目目录…'}</span>
+                <span className="max-w-[260px] truncate">{cwdName ?? t('pickProjectDir')}</span>
                 {menuOpen ? <ChevronUp className="size-3" /> : <ChevronDown className="size-3" />}
               </Button>
             </PopoverTrigger>
             <PopoverContent side="top" className="w-[380px]">
-              <div className="px-2.5 pt-1.5 pb-0.5 text-xs text-faint select-none">最近的文件夹</div>
+              <div className="px-2.5 pt-1.5 pb-0.5 text-xs text-faint select-none">{t('recentFolders')}</div>
                   <div className="max-h-72 overflow-y-auto">
                     {projects.map((p) => (
                       <button
@@ -189,7 +191,7 @@ export function DraftView({
                 }}
               >
                 <FolderSearch className="size-[15px] shrink-0 text-muted-foreground" />
-                <span className="text-[13px]">选择文件夹…</span>
+                <span className="text-[13px]">{t('chooseFolder')}</span>
               </button>
             </PopoverContent>
           </Popover>

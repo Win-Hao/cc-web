@@ -7,6 +7,8 @@ import {
   BarChart3, ChevronRight, Globe, Settings, SunMoon,
 } from 'lucide-react'
 import { api } from '../lib/api'
+import { getLang, setLang, t, useLang } from '../lib/i18n'
+import type { Lang } from '../lib/i18n'
 import { getTheme, setTheme } from '../lib/theme'
 import type { Theme } from '../lib/theme'
 import { Button } from '@/components/ui/button'
@@ -16,12 +18,13 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Separator } from '@/components/ui/separator'
 
-const THEME_LABEL: Record<Theme, string> = {
-  system: '跟随系统',
-  light: '浅色',
-  dark: '深色',
-}
+const THEME_KEY = {
+  system: 'themeSystem',
+  light: 'themeLight',
+  dark: 'themeDark',
+} as const
 const THEME_ORDER: Theme[] = ['system', 'light', 'dark']
+const LANG_LABEL: Record<Lang, string> = { zh: '简体中文', en: 'English' }
 
 const menuRow =
   'flex w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-[13px] outline-none hover:bg-sidebar-accent focus-visible:bg-sidebar-accent'
@@ -37,18 +40,20 @@ interface PlanUsage {
   subscription_type: string | null
 }
 
-const WINDOW_LABEL: Record<string, string> = {
-  five_hour: '5 小时窗口',
-  seven_day: '7 天窗口',
-  seven_day_sonnet: '7 天窗口 · Sonnet',
-  seven_day_opus: '7 天窗口 · Opus',
+const WINDOW_KEY: Record<string, 'win_five_hour' | 'win_seven_day' | 'win_seven_day_sonnet' | 'win_seven_day_opus'> = {
+  five_hour: 'win_five_hour',
+  seven_day: 'win_seven_day',
+  seven_day_sonnet: 'win_seven_day_sonnet',
+  seven_day_opus: 'win_seven_day_opus',
 }
 
 function fmtReset(iso: string | undefined): string | null {
   if (iso === undefined) return null
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return null
-  return `重置于 ${d.toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`
+  return t('resetsAt', {
+    t: d.toLocaleString(getLang() === 'zh' ? 'zh-CN' : 'en-US', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
+  })
 }
 
 function UsageBar({ label, win }: { label: string; win: RateWindow }) {
@@ -74,6 +79,7 @@ function UsageBar({ label, win }: { label: string; win: RateWindow }) {
 }
 
 function PlanUsageDialog({ onClose }: { onClose: () => void }) {
+  useLang()
   const [data, setData] = useState<PlanUsage | null | 'loading' | 'error'>('loading')
 
   useEffect(() => {
@@ -86,26 +92,26 @@ function PlanUsageDialog({ onClose }: { onClose: () => void }) {
     <Dialog open onOpenChange={(o) => { if (!o) onClose() }}>
       <DialogContent showCloseButton className="w-[min(420px,92vw)]">
         <DialogHeader>
-          <DialogTitle>套餐用量</DialogTitle>
+          <DialogTitle>{t('planUsage')}</DialogTitle>
         </DialogHeader>
-        {data === 'loading' && <div className="py-4 text-[13px] text-faint">加载中…（可能要几秒起引擎）</div>}
-        {data === 'error' && <div className="py-4 text-[13px] text-destructive">加载失败</div>}
+        {data === 'loading' && <div className="py-4 text-[13px] text-faint">{t('usageLoadHint')}</div>}
+        {data === 'error' && <div className="py-4 text-[13px] text-destructive">{t('loadFailed')}</div>}
         {data !== 'loading' && data !== 'error' && (
           data === null || !data.rate_limits_available || data.rate_limits === null ? (
             <div className="py-4 text-[13px] text-muted-foreground">
-              当前账户类型没有套餐额度信息（API key / Bedrock / Vertex 属正常情况）。
+              {t('noRateInfo')}
             </div>
           ) : (
             <div className="py-1">
               {data.subscription_type !== null && (
                 <div className="mb-3 text-xs text-muted-foreground">
-                  订阅类型：<span className="text-foreground">{data.subscription_type}</span>
+                  {t('subscription')}<span className="text-foreground">{data.subscription_type}</span>
                 </div>
               )}
               {Object.entries(data.rate_limits)
                 .filter(([, w]) => typeof w === 'object' && w !== null && typeof w.utilization === 'number')
                 .map(([key, w]) => (
-                  <UsageBar key={key} label={WINDOW_LABEL[key] ?? key} win={w} />
+                  <UsageBar key={key} label={WINDOW_KEY[key] !== undefined ? t(WINDOW_KEY[key]!) : key} win={w} />
                 ))}
             </div>
           )
@@ -117,6 +123,7 @@ function PlanUsageDialog({ onClose }: { onClose: () => void }) {
 
 /* ── 设置面板 ── */
 function SettingsDialog({ onClose }: { onClose: () => void }) {
+  useLang()
   const [meta, setMeta] = useState<{ version?: string; home?: string } | null>(null)
 
   useEffect(() => {
@@ -134,16 +141,15 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
     <Dialog open onOpenChange={(o) => { if (!o) onClose() }}>
       <DialogContent showCloseButton className="w-[min(420px,92vw)]">
         <DialogHeader>
-          <DialogTitle>设置</DialogTitle>
+          <DialogTitle>{t('settings')}</DialogTitle>
         </DialogHeader>
         <div className="py-1">
-          <Row label="版本" value={`cc-web ${meta?.version ?? '…'}`} />
-          <Row label="会话数据" value="~/.claude/projects" />
-          <Row label="Claude CLI 基线" value="2.1.241" />
+          <Row label={t('version')} value={`cc-web ${meta?.version ?? '…'}`} />
+          <Row label={t('dataDir')} value="~/.claude/projects" />
+          <Row label={t('cliBaseline')} value="2.1.241" />
           <Separator className="my-2" />
           <div className="text-xs leading-relaxed text-faint">
-            本地 Web UI：服务器只绑 127.0.0.1，数据不出本机。
-            引擎、模型、权限都由本机的 claude CLI 提供。
+            {t('aboutText')}
           </div>
         </div>
       </DialogContent>
@@ -153,6 +159,7 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
 
 /* ── 底部菜单 ── */
 export function SidebarFooter() {
+  const lang = useLang()
   const [open, setOpen] = useState(false)
   const [theme, setThemeState] = useState<Theme>(() => getTheme())
   const [showUsage, setShowUsage] = useState(false)
@@ -171,7 +178,7 @@ export function SidebarFooter() {
           <PopoverTrigger asChild>
             <button className={menuRow}>
               <Settings className="size-4 shrink-0 text-muted-foreground" />
-              <span className="min-w-0 flex-1 truncate">设置</span>
+              <span className="min-w-0 flex-1 truncate">{t('settings')}</span>
             </button>
           </PopoverTrigger>
           <PopoverContent side="top" align="start" className="w-[232px]">
@@ -183,19 +190,19 @@ export function SidebarFooter() {
               }}
             >
               <BarChart3 className="size-4 shrink-0 text-muted-foreground" />
-              <span className="flex-1">套餐用量</span>
+              <span className="flex-1">{t('planUsage')}</span>
               <ChevronRight className="size-3.5 text-faint" />
             </button>
             <Separator className="my-1" />
             <button className={menuRow} onClick={cycleTheme}>
               <SunMoon className="size-4 shrink-0 text-muted-foreground" />
-              <span className="flex-1">外观</span>
-              <span className="text-xs text-muted-foreground">{THEME_LABEL[theme]}</span>
+              <span className="flex-1">{t('appearance')}</span>
+              <span className="text-xs text-muted-foreground">{t(THEME_KEY[theme])}</span>
             </button>
-            <button className={menuRow}>
+            <button className={menuRow} onClick={() => setLang(lang === 'zh' ? 'en' : 'zh')}>
               <Globe className="size-4 shrink-0 text-muted-foreground" />
-              <span className="flex-1">语言</span>
-              <span className="text-xs text-muted-foreground">简体中文</span>
+              <span className="flex-1">{t('language')}</span>
+              <span className="text-xs text-muted-foreground">{LANG_LABEL[lang]}</span>
             </button>
             <button
               className={menuRow}
@@ -205,7 +212,7 @@ export function SidebarFooter() {
               }}
             >
               <Settings className="size-4 shrink-0 text-muted-foreground" />
-              <span className="flex-1">设置</span>
+              <span className="flex-1">{t('settings')}</span>
               <ChevronRight className="size-3.5 text-faint" />
             </button>
           </PopoverContent>

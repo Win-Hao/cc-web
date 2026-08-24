@@ -9,6 +9,7 @@ import { segmentsFromContent, textOfSegments, toolResultsFromContent } from '../
 import type { HistoryMessage, Segment, ToolSeg } from '../types'
 import { Markdown } from './Markdown'
 import { cn } from '@/lib/utils'
+import { t, useLang } from '../lib/i18n'
 
 interface SideMsg {
   role: 'user' | 'assistant'
@@ -50,6 +51,7 @@ interface Props {
 }
 
 export function SidechainBlock({ fetchPath, label }: Props) {
+  useLang()
   const [open, setOpen] = useState(false)
   const [msgs, setMsgs] = useState<SideMsg[] | null>(null)
   const [failed, setFailed] = useState(false)
@@ -75,8 +77,8 @@ export function SidechainBlock({ fetchPath, label }: Props) {
       </button>
       {open && (
         <div className="mt-2 border-l-2 border-accent-bd py-1 pl-3">
-          {failed && <div className="py-1 text-xs text-faint">加载失败</div>}
-          {!failed && msgs === null && <div className="py-1 text-xs text-faint">加载中…</div>}
+          {failed && <div className="py-1 text-xs text-faint">{t('loadFailed')}</div>}
+          {!failed && msgs === null && <div className="py-1 text-xs text-faint">{t('loading')}</div>}
           {msgs?.map((m, i) => (
             <div className="mt-2 first:mt-0" key={i}>
               {m.segments.map((seg, si) =>

@@ -3,6 +3,8 @@
  * token 从 URL fragment 读（#token=，不进 access log），读到就存
  * sessionStorage，后续刷新/去掉 fragment 也能用。
  */
+import { t } from './i18n'
+
 const hash = new URLSearchParams(location.hash.slice(1))
 const fromHash = hash.get('token')
 if (fromHash !== null) sessionStorage.setItem('cc-web.token', fromHash)
@@ -27,7 +29,7 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
     })
   } catch {
     // fetch 层失败（连接拒绝/中断）：服务器没在跑或刚重启
-    throw new Error('无法连接 cc-web 服务器 —— 进程没在跑？起来后会自动重连')
+    throw new Error(t('connectFail'))
   }
   const env = (await res.json()) as Envelope<T>
   if (env.code !== 0) throw new Error(env.msg !== '' ? env.msg : `code=${env.code}`)

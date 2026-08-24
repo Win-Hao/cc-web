@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 import type { Approval } from '../types'
+import { t, useLang } from '../lib/i18n'
 
 interface QOption {
   label: string
@@ -55,6 +56,7 @@ interface Props {
 }
 
 export function QuestionDialog({ approval, onAnswer, onDeny }: Props) {
+  useLang()
   const questions = useMemo(() => parseQuestions(approval.input), [approval.input])
   const [picked, setPicked] = useState<ReadonlyMap<number, ReadonlySet<string>>>(new Map())
   const [custom, setCustom] = useState('')
@@ -143,12 +145,12 @@ export function QuestionDialog({ approval, onAnswer, onDeny }: Props) {
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.nativeEvent.isComposing) submit()
           }}
-          placeholder="其他（自由输入）…"
+          placeholder={t('otherInput')}
           spellCheck={false}
         />
         <DialogFooter>
-          <Button variant="outline" size="sm" onClick={onDeny}>取消</Button>
-          <Button size="sm" disabled={!canSubmit} onClick={submit}>回答</Button>
+          <Button variant="outline" size="sm" onClick={onDeny}>{t('cancel')}</Button>
+          <Button size="sm" disabled={!canSubmit} onClick={submit}>{t('answer')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

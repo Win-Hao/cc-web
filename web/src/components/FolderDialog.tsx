@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
+import { t, useLang } from '../lib/i18n'
 
 interface Props {
   /** 初始目录（通常是当前选中的项目） */
@@ -20,6 +21,7 @@ interface Props {
 }
 
 export function FolderDialog({ initialPath, onCancel, onPick }: Props) {
+  useLang()
   const [path, setPath] = useState(initialPath)
   const [dirs, setDirs] = useState<string[]>([])
   const [err, setErr] = useState<string | null>(null)
@@ -56,12 +58,12 @@ export function FolderDialog({ initialPath, onCancel, onPick }: Props) {
     <Dialog open onOpenChange={(o) => { if (!o) onCancel() }}>
       <DialogContent showCloseButton className="flex max-h-[80vh] w-[min(640px,94vw)] flex-col gap-0 p-0">
         <DialogHeader className="border-b px-5 pt-4 pb-3">
-          <DialogTitle>选择文件夹</DialogTitle>
+          <DialogTitle>{t('folderTitle')}</DialogTitle>
         </DialogHeader>
 
         {/* 面包屑：↑ 上一级 + 可点击的路径段 */}
         <div className="flex min-w-0 items-center gap-1 border-b px-4 py-2 text-[13px]">
-          <Button variant="ghost" size="icon" className="size-6 rounded-md" title="上一级" onClick={() => load(parent)}>
+          <Button variant="ghost" size="icon" className="size-6 rounded-md" title={t('parentDir')} onClick={() => load(parent)}>
             <ArrowUp className="size-3.5" />
           </Button>
           <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto whitespace-nowrap">
@@ -89,7 +91,7 @@ export function FolderDialog({ initialPath, onCancel, onPick }: Props) {
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="在此目录下搜索…"
+            placeholder={t('searchInDir')}
             spellCheck={false}
             className="w-full bg-transparent text-[13px] outline-none placeholder:text-faint"
           />
@@ -99,7 +101,7 @@ export function FolderDialog({ initialPath, onCancel, onPick }: Props) {
         <div className="min-h-[200px] flex-1 overflow-y-auto p-1.5">
           {err !== null && <div className="px-3 py-2 text-xs text-destructive">{err}</div>}
           {err === null && shown.length === 0 && (
-            <div className="px-3 py-2 text-xs text-faint">{q !== '' ? '没有匹配的目录' : '没有子目录'}</div>
+            <div className="px-3 py-2 text-xs text-faint">{q !== '' ? t('noMatchDirs') : t('noSubdirs')}</div>
           )}
           {shown.map((d) => (
             <button
@@ -121,7 +123,7 @@ export function FolderDialog({ initialPath, onCancel, onPick }: Props) {
         <div className="border-t px-4 py-2">
           {!manual ? (
             <button className="cursor-pointer text-[13px] text-muted-foreground hover:text-foreground" onClick={() => setManual(true)}>
-              直接输入绝对路径
+              {t('enterAbsPath')}
             </button>
           ) : (
             <Input
@@ -135,7 +137,7 @@ export function FolderDialog({ initialPath, onCancel, onPick }: Props) {
                   setManualPath('')
                 }
               }}
-              placeholder="/absolute/path 或 ~/path，Enter 跳转"
+              placeholder={t('absPathPlaceholder')}
               spellCheck={false}
               className="font-mono text-xs"
             />
@@ -143,11 +145,11 @@ export function FolderDialog({ initialPath, onCancel, onPick }: Props) {
         </div>
 
         <div className="flex items-center justify-end gap-2 border-t px-4 py-3">
-          <Button size="sm" onClick={() => onPick(path)}>打开此文件夹</Button>
-          <Button variant="outline" size="sm" onClick={onCancel}>取消</Button>
+          <Button size="sm" onClick={() => onPick(path)}>{t('openThisFolder')}</Button>
+          <Button variant="outline" size="sm" onClick={onCancel}>{t('cancel')}</Button>
         </div>
         <div className="px-4 pb-3 text-xs text-faint">
-          点击文件夹进入，再点「打开此文件夹」将其设为新会话的工作目录。
+          {t('folderHint')}
         </div>
       </DialogContent>
     </Dialog>

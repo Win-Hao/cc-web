@@ -1,0 +1,189 @@
+/**
+ * 轻量 i18n（M33）：zh/en 双语，localStorage 持久化，
+ * useSyncExternalStore 驱动切换即时重渲。只覆盖界面 chrome ——
+ * 会话内容、服务端信封错误原样透传。
+ */
+import { useSyncExternalStore } from 'react'
+
+export type Lang = 'zh' | 'en'
+
+const KEY = 'cc-web.lang'
+let lang: Lang = localStorage.getItem(KEY) === 'en' ? 'en' : 'zh'
+const subs = new Set<() => void>()
+
+export function getLang(): Lang {
+  return lang
+}
+
+export function setLang(l: Lang): void {
+  lang = l
+  localStorage.setItem(KEY, l)
+  for (const f of subs) f()
+}
+
+export function useLang(): Lang {
+  return useSyncExternalStore(
+    (cb) => {
+      subs.add(cb)
+      return () => subs.delete(cb)
+    },
+    () => lang,
+  )
+}
+
+const zh = {
+  newSession: '新建会话',
+  searchSessions: '搜索会话…',
+  loading: '加载中…',
+  noSessions: '没有会话',
+  noMatch: '没有匹配的会话',
+  showMore: '展开更多 ({n})',
+  collapse: '收起',
+  sessionCount: '{n}',
+  draftHint: '还没有消息 —— 在下方输入开始对话',
+  draftPlaceholder: '输入消息…',
+  recentFolders: '最近的文件夹',
+  chooseFolder: '选择文件夹…',
+  pickProjectDir: '选择项目目录…',
+  folderTitle: '选择文件夹',
+  searchInDir: '在此目录下搜索…',
+  noSubdirs: '没有子目录',
+  noMatchDirs: '没有匹配的目录',
+  parentDir: '上一级',
+  enterAbsPath: '直接输入绝对路径',
+  absPathPlaceholder: '/absolute/path 或 ~/path，Enter 跳转',
+  openThisFolder: '打开此文件夹',
+  useFolder: '选用 {p}',
+  back: '返回',
+  cancel: '取消',
+  folderHint: '点击文件夹进入，再点「打开此文件夹」将其设为新会话的工作目录。',
+  composerPlaceholder: '发消息… (Enter 发送，Shift+Enter 换行)',
+  selectSessionFirst: '先选择一个会话',
+  send: '发送',
+  interrupt: '中断',
+  model: '模型',
+  modelsLoading: '模型列表加载中…',
+  thinking: '思考',
+  cacheHint: '提示：切换模型或思考程度会使已有的提示词缓存失效，可能带来额外的 token 消耗。',
+  ctxAria: 'context 用量',
+  ctxTooltip: '使用 {a} / {b} tokens ({p}%)',
+  estimated: '（估算）',
+  stateIdle: '空闲',
+  stateRunning: '运行中',
+  stateWaiting: '等待审批',
+  offline: '已断线，重连中…',
+  approvalTitle: '工具审批：{name}',
+  unknownTool: '未知工具',
+  allow: '允许',
+  deny: '拒绝',
+  answer: '回答',
+  otherInput: '其他（自由输入）…',
+  subagent: '子代理',
+  subagentMsgs: '子代理 · {n} 条',
+  subagentBadge: '子代理 {n} 条',
+  loadFailed: '加载失败',
+  planUsage: '套餐用量',
+  appearance: '外观',
+  themeSystem: '跟随系统',
+  themeLight: '浅色',
+  themeDark: '深色',
+  language: '语言',
+  settings: '设置',
+  subscription: '订阅类型：',
+  noRateInfo: '当前账户类型没有套餐额度信息（API key / Bedrock / Vertex 属正常情况）。',
+  resetsAt: '重置于 {t}',
+  win_five_hour: '5 小时窗口',
+  win_seven_day: '7 天窗口',
+  win_seven_day_opus: '7 天窗口 · Opus',
+  win_seven_day_sonnet: '7 天窗口 · Sonnet',
+  usageLoadHint: '加载中…（可能要几秒起引擎）',
+  version: '版本',
+  dataDir: '会话数据',
+  cliBaseline: 'Claude CLI 基线',
+  aboutText: '本地 Web UI：服务器只绑 127.0.0.1，数据不出本机。引擎、模型、权限都由本机的 claude CLI 提供。',
+  connectFail: '无法连接 cc-web 服务器 —— 进程没在跑？起来后会自动重连',
+}
+
+const en: Record<keyof typeof zh, string> = {
+  newSession: 'New session',
+  searchSessions: 'Search sessions…',
+  loading: 'Loading…',
+  noSessions: 'No sessions',
+  noMatch: 'No matches',
+  showMore: 'Show more ({n})',
+  collapse: 'Collapse',
+  sessionCount: '{n}',
+  draftHint: 'No messages yet — type below to start',
+  draftPlaceholder: 'Type a message…',
+  recentFolders: 'Recent folders',
+  chooseFolder: 'Choose folder…',
+  pickProjectDir: 'Pick a project directory…',
+  folderTitle: 'Choose folder',
+  searchInDir: 'Search this directory…',
+  noSubdirs: 'No subdirectories',
+  noMatchDirs: 'No matching directories',
+  parentDir: 'Parent directory',
+  enterAbsPath: 'Enter an absolute path',
+  absPathPlaceholder: '/absolute/path or ~/path, press Enter',
+  openThisFolder: 'Open this folder',
+  useFolder: 'Use {p}',
+  back: 'Back',
+  cancel: 'Cancel',
+  folderHint: 'Click a folder to enter it, then "Open this folder" to use it as the new session’s working directory.',
+  composerPlaceholder: 'Message… (Enter to send, Shift+Enter for newline)',
+  selectSessionFirst: 'Select a session first',
+  send: 'Send',
+  interrupt: 'Stop',
+  model: 'Model',
+  modelsLoading: 'Loading models…',
+  thinking: 'Effort',
+  cacheHint: 'Note: switching the model or effort level invalidates the prompt cache and may cost extra tokens.',
+  ctxAria: 'Context usage',
+  ctxTooltip: 'Used {a} / {b} tokens ({p}%)',
+  estimated: ' (estimated)',
+  stateIdle: 'Idle',
+  stateRunning: 'Running',
+  stateWaiting: 'Awaiting approval',
+  offline: 'Disconnected, reconnecting…',
+  approvalTitle: 'Tool approval: {name}',
+  unknownTool: 'unknown tool',
+  allow: 'Allow',
+  deny: 'Deny',
+  answer: 'Answer',
+  otherInput: 'Other (free-form)…',
+  subagent: 'Subagent',
+  subagentMsgs: 'Subagent · {n} msgs',
+  subagentBadge: 'Subagent {n} msgs',
+  loadFailed: 'Failed to load',
+  planUsage: 'Plan usage',
+  appearance: 'Appearance',
+  themeSystem: 'System',
+  themeLight: 'Light',
+  themeDark: 'Dark',
+  language: 'Language',
+  settings: 'Settings',
+  subscription: 'Subscription: ',
+  noRateInfo: 'This account type has no plan quota info (normal for API key / Bedrock / Vertex).',
+  resetsAt: 'Resets at {t}',
+  win_five_hour: '5-hour window',
+  win_seven_day: '7-day window',
+  win_seven_day_opus: '7-day window · Opus',
+  win_seven_day_sonnet: '7-day window · Sonnet',
+  usageLoadHint: 'Loading… (may take a few seconds to start an engine)',
+  version: 'Version',
+  dataDir: 'Session data',
+  cliBaseline: 'Claude CLI baseline',
+  aboutText: 'Local web UI: the server binds 127.0.0.1 only; nothing leaves this machine. Engines, models and permissions come from the local claude CLI.',
+  connectFail: 'Cannot reach the cc-web server — is it running? It will reconnect automatically once it is.',
+}
+
+export type I18nKey = keyof typeof zh
+const dicts: Record<Lang, Record<I18nKey, string>> = { zh, en }
+
+export function t(key: I18nKey, vars?: Record<string, string | number>): string {
+  let s = dicts[lang][key]
+  if (vars !== undefined) {
+    for (const [k, v] of Object.entries(vars)) s = s.replace(`{${k}}`, String(v))
+  }
+  return s
+}

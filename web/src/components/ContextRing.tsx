@@ -6,6 +6,7 @@ import {
   Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
+import { t, useLang } from '../lib/i18n'
 
 export interface ContextInfo {
   total: number
@@ -28,6 +29,7 @@ const R = 6
 const CIRC = 2 * Math.PI * R
 
 export function ContextRing({ info }: { info: ContextInfo }) {
+  useLang()
   const pct = Math.max(0, Math.min(100, info.percentage))
   const dash = (pct / 100) * CIRC
   return (
@@ -36,7 +38,7 @@ export function ContextRing({ info }: { info: ContextInfo }) {
         <TooltipTrigger asChild>
           <button
             type="button"
-            aria-label="context 用量"
+            aria-label={t('ctxAria')}
             className="inline-flex size-7 cursor-default items-center justify-center rounded-full outline-none hover:bg-sidebar-accent focus-visible:bg-sidebar-accent"
           >
             <svg width="16" height="16" viewBox="0 0 16 16" className="-rotate-90">
@@ -59,8 +61,8 @@ export function ContextRing({ info }: { info: ContextInfo }) {
           </button>
         </TooltipTrigger>
         <TooltipContent side="top">
-          使用 {fmtTokens(info.total)} / {fmtTokens(info.max)} tokens ({Math.round(pct)}%)
-          {info.estimated && '（估算）'}
+          {t('ctxTooltip', { a: fmtTokens(info.total), b: fmtTokens(info.max), p: Math.round(pct) })}
+          {info.estimated && t('estimated')}
         </TooltipContent>
       </Tooltip>
     </TooltipProvider>

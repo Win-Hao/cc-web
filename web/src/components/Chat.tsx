@@ -8,6 +8,7 @@ import { textOfSegments } from '../lib/segments'
 import { Markdown } from './Markdown'
 import { SidechainBlock } from './SidechainBlock'
 import { cn } from '@/lib/utils'
+import { t, useLang } from '../lib/i18n'
 
 function ToolRow({ seg }: { seg: ToolSeg }) {
   const expandable = (seg.detail !== '' && seg.detail !== '{}') || (seg.result !== null && seg.result !== '')
@@ -31,7 +32,7 @@ function ToolRow({ seg }: { seg: ToolSeg }) {
         <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{seg.summary}</span>
         {seg.subCount > 0 && (
           <span className="shrink-0 rounded-full bg-accent px-2 text-xs text-accent-foreground">
-            子代理 {seg.subCount} 条
+            {t('subagentBadge', { n: seg.subCount })}
           </span>
         )}
       </summary>
@@ -61,6 +62,7 @@ interface Props {
 }
 
 export function Chat({ messages, streamText, sessionId }: Props) {
+  useLang()
   const scrollRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -73,7 +75,7 @@ export function Chat({ messages, streamText, sessionId }: Props) {
       <div className="mx-auto flex max-w-[760px] flex-col px-4 pt-4 pb-5">
         {messages.length === 0 && streamText === '' && (
           <div className="m-auto py-12 text-center text-[13px] text-faint">
-            还没有消息 —— 在下方输入开始对话
+            {t('draftHint')}
           </div>
         )}
         {messages.map((m) =>
@@ -111,7 +113,7 @@ export function Chat({ messages, streamText, sessionId }: Props) {
               {m.sidechain !== null && (
                 <SidechainBlock
                   fetchPath={`/api/v1/sessions/${sessionId}/sidechains/${m.sidechain.uuid}`}
-                  label={`子代理 · ${m.sidechain.count} 条`}
+                  label={t('subagentMsgs', { n: m.sidechain.count })}
                 />
               )}
               {m.meta !== null && <div className="mt-1 text-xs text-faint">{m.meta}</div>}

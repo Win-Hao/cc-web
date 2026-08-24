@@ -13,6 +13,7 @@ import { cn } from '@/lib/utils'
 import { ContextRing } from './ContextRing'
 import type { ContextInfo } from './ContextRing'
 import { ModelPicker } from './ModelPicker'
+import { t, useLang } from '../lib/i18n'
 import type { ModelOption } from '../types'
 
 const PERMISSION_MODES = ['default', 'acceptEdits', 'plan', 'bypassPermissions']
@@ -40,6 +41,7 @@ export function Composer({
   context,
 }: Props) {
   const [text, setText] = useState('')
+  useLang()
   const taRef = useRef<HTMLTextAreaElement>(null)
 
   const send = () => {
@@ -59,7 +61,7 @@ export function Composer({
           rows={1}
           value={text}
           disabled={disabled}
-          placeholder={disabled ? '先选择一个会话' : '发消息… (Enter 发送，Shift+Enter 换行)'}
+          placeholder={disabled ? t('selectSessionFirst') : t('composerPlaceholder')}
           className="max-h-40 min-h-[52px] px-4 pt-3 pb-1"
           onChange={(e) => {
             setText(e.target.value)
@@ -101,11 +103,11 @@ export function Composer({
             onOpen={onModelMenuOpen}
           />
           {running ? (
-            <Button size="icon" variant="destructive" title="中断" onClick={onInterrupt}>
+            <Button size="icon" variant="destructive" title={t('interrupt')} onClick={onInterrupt}>
               <Square className="size-3 fill-current" />
             </Button>
           ) : (
-            <Button size="icon" title="发送" disabled={disabled || text.trim() === ''} onClick={send}>
+            <Button size="icon" title={t('send')} disabled={disabled || text.trim() === ''} onClick={send}>
               <ArrowUp className="size-4" />
             </Button>
           )}

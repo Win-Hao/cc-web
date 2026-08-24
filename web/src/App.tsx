@@ -8,6 +8,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, post, token } from './lib/api'
+import { t, useLang } from './lib/i18n'
 import { groupName, sessionTitle } from './lib/format'
 import { humanText, segmentsFromContent, textOfSegments, toolResultsFromContent } from './lib/segments'
 import type { ToolResultInfo } from './lib/segments'
@@ -28,13 +29,14 @@ import { QuestionDialog } from './components/QuestionDialog'
 let keySeq = 0
 const nextKey = () => `m${++keySeq}`
 
-const STATE_LABEL: Record<SessionState, string> = {
-  idle: '空闲',
-  running: '运行中',
-  'waiting-approval': '等待审批',
-}
+const STATE_KEY = {
+  idle: 'stateIdle',
+  running: 'stateRunning',
+  'waiting-approval': 'stateWaiting',
+} as const
 
 export default function App() {
+  useLang()
   const [sessions, setSessions] = useState<SessionSummary[]>([])
   const [sessionsLoading, setSessionsLoading] = useState(true)
   const [sessionId, setSessionId] = useState<string | null>(
@@ -225,7 +227,7 @@ export default function App() {
       const byTool = new Map<string, { id: string; label: string }>()
       for (const a of d.agents) {
         if (a.tool_use_id === null) continue
-        const label = `子代理 · ${a.agent_type ?? 'agent'}${a.description !== null ? ` · ${a.description}` : ''}`
+        const label = `${t('subagent')} · ${a.agent_type ?? 'agent'}${a.description !== null ? ` · ${a.description}` : ''}`
         byTool.set(a.tool_use_id, { id: a.agent_id, label: label.length > 60 ? `${label.slice(0, 60)}…` : label })
       }
       if (byTool.size === 0) return
@@ -650,7 +652,7 @@ export default function App() {
                     (state === 'running' || !connected) && 'animate-pulse',
                   )}
                 />
-                {connected ? STATE_LABEL[state] : '已断线，重连中…'}
+                {connected ? t(STATE_KEY[state]) : t('offline')}
               </Badge>
               {usage !== '' && <span className="text-xs text-faint tabular-nums">{usage}</span>}
             </>

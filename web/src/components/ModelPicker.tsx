@@ -9,6 +9,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
 import type { ModelOption } from '../types'
+import { t, useLang } from '../lib/i18n'
 
 interface Props {
   models: ModelOption[]
@@ -24,6 +25,7 @@ interface Props {
 }
 
 export function ModelPicker({ models, modelValue, modelResolved, effort, onModel, onEffort, onOpen }: Props) {
+  useLang()
   const [open, setOpen] = useState(false)
 
   const current =
@@ -32,7 +34,7 @@ export function ModelPicker({ models, modelValue, modelResolved, effort, onModel
     // 都没有（首轮 init 帧还没来）：会话默认就是 default 项
     models.find((m) => m.value === 'default')
 
-  const pillLabel = current?.label ?? modelResolved ?? '模型'
+  const pillLabel = current?.label ?? modelResolved ?? t('model')
   const effortLevels =
     current?.supportsEffort === true
       ? current.effortLevels.length > 0
@@ -58,9 +60,9 @@ export function ModelPicker({ models, modelValue, modelResolved, effort, onModel
         </Button>
       </PopoverTrigger>
       <PopoverContent side="top" align="end" className="w-[320px]">
-        <div className="px-2.5 pt-1.5 pb-0.5 text-xs text-faint select-none">模型</div>
+        <div className="px-2.5 pt-1.5 pb-0.5 text-xs text-faint select-none">{t('model')}</div>
         <div className="max-h-64 overflow-y-auto">
-          {models.length === 0 && <div className="px-2.5 py-2 text-xs text-faint">模型列表加载中…</div>}
+          {models.length === 0 && <div className="px-2.5 py-2 text-xs text-faint">{t('modelsLoading')}</div>}
           {models.map((m) => {
             const on = current?.value === m.value
             return (
@@ -91,7 +93,7 @@ export function ModelPicker({ models, modelValue, modelResolved, effort, onModel
           <>
             <Separator className="my-1" />
             <div className="flex items-center gap-2 px-2.5 py-1.5">
-              <span className="text-xs text-muted-foreground">思考</span>
+              <span className="text-xs text-muted-foreground">{t('thinking')}</span>
               <div className="flex flex-1 justify-end">
                 <div className="flex rounded-md bg-secondary p-0.5">
                   {effortLevels.map((lv) => (
@@ -112,7 +114,7 @@ export function ModelPicker({ models, modelValue, modelResolved, effort, onModel
           </>
         )}
         <div className="px-2.5 py-1.5 text-xs leading-relaxed text-faint">
-          提示：切换模型或思考程度会使已有的提示词缓存失效，可能带来额外的 token 消耗。
+          {t('cacheHint')}
         </div>
       </PopoverContent>
     </Popover>
