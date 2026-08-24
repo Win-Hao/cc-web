@@ -764,7 +764,7 @@ export function Chat({
       const anchors = messages.filter((m) => m.role === 'user')
       if (anchors.length < 2) return null
       return (
-        <div className="absolute top-1/2 right-1.5 z-10 flex max-h-[70%] -translate-y-1/2 flex-col items-center gap-[5px] overflow-hidden">
+        <div className="absolute top-1/2 left-[min(calc(50%+396px),calc(100%-20px))] z-10 flex max-h-[70%] -translate-y-1/2 flex-col items-center gap-[5px] overflow-hidden">
           {anchors.map((m) => (
             <button
               className={cn(
