@@ -6,7 +6,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Archive, ArchiveRestore, ChevronDown, ChevronUp, Copy, Download, FileText, Folder, GitFork,
-  LoaderCircle, MessageSquareText, Pencil, Pin, PinOff, Plus, Search,
+  LoaderCircle, MessageSquareText, Pencil, Pin, PinOff, Plus, Search, X,
 } from 'lucide-react'
 import type { SearchHit, SessionSummary } from '../types'
 import { api, post, token } from '../lib/api'
@@ -51,11 +51,29 @@ function saveIdSet(key: string, set: ReadonlySet<string>): void {
 }
 const PINS_KEY = 'cc-web.pinned'
 const ARCHIVE_KEY = 'cc-web.archived'
+const PROJ_NAMES_KEY = 'cc-web.project-names'
+const PROJ_REMOVED_KEY = 'cc-web.removed-projects'
+
+function loadStrMap(key: string): Record<string, string> {
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(key) ?? '{}')
+    return typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, string>) : {}
+  } catch {
+    return {}
+  }
+}
 
 interface MenuState {
   x: number
   y: number
   s: SessionSummary
+}
+
+interface GroupMenuState {
+  x: number
+  y: number
+  key: string
+  name: string
 }
 
 function toggled(set: ReadonlySet<string>, key: string): Set<string> {
@@ -80,16 +98,27 @@ export function Sidebar({ sessions, loading, activeId, onSelect, onNewSession, o
   const [showArchived, setShowArchived] = useState(false)
   const [menu, setMenu] = useState<MenuState | null>(null)
   const [renaming, setRenaming] = useState<{ s: SessionSummary; value: string } | null>(null)
+  /* 工作区右键菜单（M61）：改名/移除本地持久 */
+  const [projNames, setProjNames] = useState<Record<string, string>>(() => loadStrMap(PROJ_NAMES_KEY))
+  const [removedProjects, setRemovedProjects] = useState<ReadonlySet<string>>(() => loadIdSet(PROJ_REMOVED_KEY))
+  const [groupMenu, setGroupMenu] = useState<GroupMenuState | null>(null)
+  const [groupRenaming, setGroupRenaming] = useState<{ key: string; fallback: string; value: string } | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
 
   /* 右键菜单：点外面 / Esc / 窗口尺寸变化 → 关 */
   useEffect(() => {
-    if (menu === null) return
+    if (menu === null && groupMenu === null) return
     const onDown = (e: MouseEvent) => {
-      if (menuRef.current !== null && !menuRef.current.contains(e.target as Node)) setMenu(null)
+      if (menuRef.current !== null && !menuRef.current.contains(e.target as Node)) {
+        setMenu(null)
+        setGroupMenu(null)
+      }
     }
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setMenu(null)
+      if (e.key === 'Escape') {
+        setMenu(null)
+        setGroupMenu(null)
+      }
     }
     window.addEventListener('mousedown', onDown)
     window.addEventListener('keydown', onKey)
@@ -99,7 +128,7 @@ export function Sidebar({ sessions, loading, activeId, onSelect, onNewSession, o
       window.removeEventListener('keydown', onKey)
       window.removeEventListener('resize', onKey as unknown as () => void)
     }
-  }, [menu])
+  }, [menu, groupMenu])
 
   const togglePin = (id: string) => {
     setPinned((prev) => {
@@ -136,6 +165,25 @@ export function Sidebar({ sessions, loading, activeId, onSelect, onNewSession, o
     download(`/api/v1/sessions/${s.session_id}/archive`, `${s.session_id}.tar.gz`)
   const exportMarkdown = (s: SessionSummary) =>
     download(`/api/v1/sessions/${s.session_id}/export`, `${sessionTitle(s).slice(0, 40) || s.session_id}.md`)
+
+  const setProjectName = (key: string, name: string) => {
+    setProjNames((prev) => {
+      const next = { ...prev }
+      if (name.trim() === '') delete next[key]
+      else next[key] = name.trim().slice(0, 60)
+      localStorage.setItem(PROJ_NAMES_KEY, JSON.stringify(next))
+      return next
+    })
+  }
+  const toggleRemovedProject = (key: string) => {
+    setRemovedProjects((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      saveIdSet(PROJ_REMOVED_KEY, next)
+      return next
+    })
+  }
 
   const submitRename = async () => {
     if (renaming === null) return
@@ -179,13 +227,18 @@ export function Sidebar({ sessions, loading, activeId, onSelect, onNewSession, o
 
   const groups = useMemo<Group[]>(() => {
     const needle = q.trim().toLowerCase()
-    const visible = showArchived ? sessions : sessions.filter((s) => !archived.has(s.session_id))
+    const visible = sessions.filter(
+      (s) =>
+        (showArchived || !archived.has(s.session_id)) &&
+        (showArchived || !removedProjects.has(groupKey(s))),
+    )
     const list = needle === ''
       ? visible
       : visible.filter(
           (s) =>
             (s.name ?? '').toLowerCase().includes(needle) ||
             (s.first_message ?? '').toLowerCase().includes(needle) ||
+            (projNames[groupKey(s)] ?? '').toLowerCase().includes(needle) ||
             groupName(s).toLowerCase().includes(needle),
         )
     const byKey = new Map<string, Group>()
@@ -203,7 +256,7 @@ export function Sidebar({ sessions, loading, activeId, onSelect, onNewSession, o
       g.sessions.sort((a, b) => Number(pinned.has(b.session_id)) - Number(pinned.has(a.session_id)))
     }
     return [...byKey.values()]
-  }, [sessions, q, archived, showArchived, pinned])
+  }, [sessions, q, archived, showArchived, pinned, removedProjects, projNames])
 
   const filtering = q.trim() !== ''
   const titleById = useMemo(() => new Map(sessions.map((s) => [s.session_id, s])), [sessions])
@@ -248,14 +301,28 @@ export function Sidebar({ sessions, loading, activeId, onSelect, onNewSession, o
           return (
             <div key={g.key}>
               <div
-                className={cn(rowBase, 'mt-1.5 select-none text-muted-foreground')}
+                className={cn(
+                  rowBase,
+                  'mt-1.5 select-none text-muted-foreground',
+                  removedProjects.has(g.key) && 'opacity-55',
+                )}
                 title={g.key}
                 onClick={() => setCollapsed((c) => toggled(c, g.key))}
+                onContextMenu={(e) => {
+                  e.preventDefault()
+                  setMenu(null)
+                  setGroupMenu({
+                    x: Math.min(e.clientX, window.innerWidth - 200),
+                    y: Math.min(e.clientY, window.innerHeight - 180),
+                    key: g.key,
+                    name: projNames[g.key] ?? g.name,
+                  })
+                }}
               >
                 <span className="flex w-4 shrink-0 justify-center">
                   <Folder className="size-[15px]" />
                 </span>
-                <span className="min-w-0 flex-1 truncate">{g.name}</span>
+                <span className="min-w-0 flex-1 truncate">{projNames[g.key] ?? g.name}</span>
                 <span className="text-xs text-faint tabular-nums">{g.sessions.length}</span>
               </div>
               {!isCollapsed &&
@@ -271,6 +338,7 @@ export function Sidebar({ sessions, loading, activeId, onSelect, onNewSession, o
                     onClick={() => onSelect(s.session_id)}
                     onContextMenu={(e) => {
                       e.preventDefault()
+                      setGroupMenu(null)
                       setMenu({ x: Math.min(e.clientX, window.innerWidth - 200), y: Math.min(e.clientY, window.innerHeight - 320), s })
                     }}
                   >
@@ -312,13 +380,13 @@ export function Sidebar({ sessions, loading, activeId, onSelect, onNewSession, o
             </div>
           )
         })}
-        {!filtering && archived.size > 0 && (
+        {!filtering && (archived.size > 0 || removedProjects.size > 0) && (
           <button
             className={cn(rowBase, 'mt-1.5 text-xs text-muted-foreground')}
             onClick={() => setShowArchived((v) => !v)}
           >
             <span className="flex w-4 shrink-0 justify-center"><Archive className="size-3.5" /></span>
-            {t('archivedCount', { n: archived.size })}
+            {t('archivedCount', { n: archived.size + removedProjects.size })}
             {showArchived ? <ChevronUp className="ml-auto size-3.5" /> : <ChevronDown className="ml-auto size-3.5" />}
           </button>
         )}
@@ -412,6 +480,79 @@ export function Sidebar({ sessions, loading, activeId, onSelect, onNewSession, o
           ))}
           <div className="mt-1 border-t px-3 pt-1.5 pb-0.5 text-xs text-faint">
             {t('lastUpdatedAt', { t: fmtDateTime(menu.s.mtime_ms) })}
+          </div>
+        </div>
+      )}
+      {groupMenu !== null && (
+        <div
+          className="fixed z-50 min-w-[168px] rounded-lg border bg-background py-1 text-[13px] shadow-lg"
+          ref={menuRef}
+          style={{ left: groupMenu.x, top: groupMenu.y }}
+        >
+          <button
+            className="flex w-full cursor-pointer items-center gap-2.5 px-3 py-1.5 text-left hover:bg-sidebar-accent"
+            onClick={() => {
+              setGroupMenu(null)
+              void navigator.clipboard.writeText(groupMenu.key)
+            }}
+          >
+            <span className="text-muted-foreground"><Copy className="size-3.5" /></span>
+            {t('ctxCopyPath')}
+          </button>
+          <button
+            className="flex w-full cursor-pointer items-center gap-2.5 px-3 py-1.5 text-left hover:bg-sidebar-accent"
+            onClick={() => {
+              setGroupRenaming({ key: groupMenu.key, fallback: groupMenu.name, value: projNames[groupMenu.key] ?? '' })
+              setGroupMenu(null)
+            }}
+          >
+            <span className="text-muted-foreground"><Pencil className="size-3.5" /></span>
+            {t('ctxRename')}
+          </button>
+          <button
+            className={cn(
+              'flex w-full cursor-pointer items-center gap-2.5 px-3 py-1.5 text-left hover:bg-sidebar-accent',
+              !removedProjects.has(groupMenu.key) && 'text-destructive',
+            )}
+            onClick={() => {
+              setGroupMenu(null)
+              toggleRemovedProject(groupMenu.key)
+            }}
+          >
+            <span className={removedProjects.has(groupMenu.key) ? 'text-muted-foreground' : 'text-destructive'}>
+              {removedProjects.has(groupMenu.key) ? <ArchiveRestore className="size-3.5" /> : <X className="size-3.5" />}
+            </span>
+            {removedProjects.has(groupMenu.key) ? t('ctxRestoreWorkspace') : t('ctxRemoveWorkspace')}
+          </button>
+        </div>
+      )}
+      {groupRenaming !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setGroupRenaming(null)}>
+          <div className="w-[320px] rounded-xl border bg-background p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-3 text-sm font-medium">{t('renameWorkspaceTitle')}</div>
+            <Input
+              autoFocus
+              placeholder={groupRenaming.fallback}
+              value={groupRenaming.value}
+              onChange={(e) => setGroupRenaming({ ...groupRenaming, value: e.target.value })}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+                  setProjectName(groupRenaming.key, groupRenaming.value)
+                  setGroupRenaming(null)
+                }
+                if (e.key === 'Escape') setGroupRenaming(null)
+              }}
+            />
+            <div className="mt-3 flex justify-end gap-2">
+              <Button size="sm" variant="ghost" onClick={() => setGroupRenaming(null)}>{t('cancelBtn')}</Button>
+              <Button
+                size="sm"
+                onClick={() => {
+                  setProjectName(groupRenaming.key, groupRenaming.value)
+                  setGroupRenaming(null)
+                }}
+              >{t('ok')}</Button>
+            </div>
           </div>
         </div>
       )}
