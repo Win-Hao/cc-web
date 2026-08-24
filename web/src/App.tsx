@@ -1,12 +1,18 @@
 /**
- * 组合根：会话列表 + WS 订阅 + 对话流 + 顶栏控件 + 审批弹窗。
+ * 组合根：会话列表 + WS 订阅 + 对话流 + 顶栏控件 + 审批/新建弹窗。
  * 数据流照占位 UI 的形状：REST 拿历史/控制，WS 收实时事件（API.md）。
+ *
+ * 消息模型（M13）：一条消息 = 文本段 + 工具段交错。tool_use 出工具段；
+ * tool_result 不出段，按 tool_use_id 回填到对应工具段（状态 ✓/✗ + 输出）。
+ * 历史和实时帧共用 lib/segments.ts 一份提取逻辑。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, post, token } from './lib/api'
 import { groupName, sessionTitle } from './lib/format'
+import { segmentsFromContent, textOfSegments, toolResultsFromContent } from './lib/segments'
+import type { ToolResultInfo } from './lib/segments'
 import type {
-  Approval, ChatMsg, HistoryMessage, HubEvent, ModelOption, SessionState, SessionSummary,
+  Approval, ChatMsg, HistoryMessage, HubEvent, ModelOption, SessionState, SessionSummary, ToolSeg,
 } from './types'
 import { Sidebar } from './components/Sidebar'
 import { Chat } from './components/Chat'
@@ -17,20 +23,6 @@ import type { ProjectChoice } from './components/NewSessionDialog'
 
 let keySeq = 0
 const nextKey = () => `m${++keySeq}`
-
-function textOf(message: unknown): string {
-  if (typeof message !== 'object' || message === null) return ''
-  const content = (message as Record<string, unknown>).content
-  if (typeof content === 'string') return content
-  if (!Array.isArray(content)) return ''
-  return content
-    .filter((b): b is { type: string; text: string } =>
-      typeof b === 'object' && b !== null &&
-      (b as Record<string, unknown>).type === 'text' &&
-      typeof (b as Record<string, unknown>).text === 'string')
-    .map((b) => b.text)
-    .join('')
-}
 
 const STATE_LABEL: Record<SessionState, string> = {
   idle: '空闲',
@@ -56,15 +48,42 @@ export default function App() {
   const [connected, setConnected] = useState(true)
   const [showNewDialog, setShowNewDialog] = useState(false)
   const modelsLoadedRef = useRef(false)
+  /** tool_use id → 它渲染在哪条消息的哪个段（tool_result 回填用） */
+  const toolLocRef = useRef(new Map<string, { key: string; si: number }>())
 
-  const appendMsg = useCallback((m: Omit<ChatMsg, 'key'>) => {
-    setMsgs((prev) => [...prev, { ...m, key: nextKey() }])
+  const appendMsg = useCallback((m: Omit<ChatMsg, 'key'>): string => {
+    const key = nextKey()
+    setMsgs((prev) => [...prev, { ...m, key }])
+    return key
   }, [])
 
   const appendError = useCallback(
-    (text: string) => appendMsg({ role: 'error', text: `⚠ ${text}`, meta: null }),
+    (text: string) =>
+      appendMsg({ role: 'error', segments: [{ kind: 'text', text: `⚠ ${text}` }], meta: null }),
     [appendMsg],
   )
+
+  /** tool_result 回填：改对应工具段的状态和输出 */
+  const patchToolResults = useCallback((results: ToolResultInfo[]) => {
+    const hits = results.filter((r) => r.id !== null && toolLocRef.current.has(r.id))
+    if (hits.length === 0) return
+    setMsgs((prev) =>
+      prev.map((m) => {
+        const mine = hits.filter((r) => toolLocRef.current.get(r.id!)!.key === m.key)
+        if (mine.length === 0) return m
+        const segments = m.segments.map((seg, si) => {
+          const hit = mine.find((r) => toolLocRef.current.get(r.id!)!.si === si)
+          if (hit === undefined || seg.kind !== 'tool') return seg
+          return {
+            ...seg,
+            status: hit.isError ? ('error' as const) : ('ok' as const),
+            result: hit.text !== '' ? hit.text : seg.result,
+          }
+        })
+        return { ...m, segments }
+      }),
+    )
+  }, [])
 
   /* ── 会话列表 ── */
   useEffect(() => {
@@ -120,16 +139,38 @@ export default function App() {
   const loadHistory = useCallback(async (id: string) => {
     try {
       const d = await api<{ messages: HistoryMessage[] }>(`/api/v1/sessions/${id}/history?limit=100`)
-      setMsgs(
-        d.messages
-          .filter((m) => m.text !== null && m.text !== '')
-          .map((m) => ({
-            key: nextKey(),
-            role: m.role === 'user' ? ('user' as const) : ('assistant' as const),
-            text: m.text ?? '',
-            meta: m.role === 'assistant' ? m.model : null,
-          })),
-      )
+      const out: ChatMsg[] = []
+      toolLocRef.current = new Map()
+      for (const m of d.messages) {
+        const content = m.content ?? m.text
+        if (m.role === 'assistant') {
+          const segments = segmentsFromContent(content)
+          if (segments.length === 0) continue
+          const key = nextKey()
+          segments.forEach((seg, si) => {
+            if (seg.kind === 'tool' && seg.id !== null) toolLocRef.current.set(seg.id, { key, si })
+          })
+          out.push({ key, role: 'assistant', segments, meta: m.model })
+        } else if (m.role === 'user') {
+          // tool_result 回填到已登记的工具段（此时还没 setState，直接改本地数组）
+          for (const r of toolResultsFromContent(content)) {
+            const loc = r.id !== null ? toolLocRef.current.get(r.id) : undefined
+            if (loc === undefined) continue
+            const msg = out.find((x) => x.key === loc.key)
+            const seg = msg?.segments[loc.si]
+            if (seg !== undefined && seg.kind === 'tool') {
+              const t = seg as ToolSeg
+              t.status = r.isError ? 'error' : 'ok'
+              if (r.text !== '') t.result = r.text
+            }
+          }
+          const text = textOfSegments(segmentsFromContent(content))
+          if (text !== '') {
+            out.push({ key: nextKey(), role: 'user', segments: [{ kind: 'text', text }], meta: null })
+          }
+        }
+      }
+      setMsgs(out)
     } catch (e) {
       appendError((e as Error).message)
     }
@@ -141,6 +182,7 @@ export default function App() {
     setMsgs([])
     setStream('')
     setApproval(null)
+    toolLocRef.current = new Map()
 
     void loadHistory(sessionId)
     void loadUsage(sessionId)
@@ -166,21 +208,32 @@ export default function App() {
           break
         }
         case 'message': {
-          if (data.type === 'assistant' && data.message !== undefined) {
-            const text = textOf(data.message)
-            if (text !== '') {
+          const message = data.message as Record<string, unknown> | undefined
+          if (data.type === 'assistant' && message !== undefined) {
+            const segments = segmentsFromContent(message.content)
+            if (segments.length > 0) {
               setStream('')
-              const model = (data.message as Record<string, unknown>).model
-              appendMsg({ role: 'assistant', text, meta: typeof model === 'string' ? model : null })
+              const key = nextKey()
+              segments.forEach((seg, si) => {
+                if (seg.kind === 'tool' && seg.id !== null) toolLocRef.current.set(seg.id, { key, si })
+              })
+              const model = message.model
+              setMsgs((prev) => [...prev, {
+                key, role: 'assistant', segments,
+                meta: typeof model === 'string' ? model : null,
+              }])
             }
-          } else if (data.type === 'user' && data.message !== undefined) {
-            // 别的标签页发的也渲染；自己发的已乐观渲染 → 和上一条同文本就跳过
-            const text = textOf(data.message)
+          } else if (data.type === 'user' && message !== undefined) {
+            patchToolResults(toolResultsFromContent(message.content))
+            const text = textOfSegments(segmentsFromContent(message.content))
             if (text !== '') {
+              // 别的标签页发的也渲染；自己发的已乐观渲染 → 和上一条同文本就跳过
               setMsgs((prev) => {
                 const last = prev[prev.length - 1]
-                if (last !== undefined && last.role === 'user' && last.text === text) return prev
-                return [...prev, { key: nextKey(), role: 'user', text, meta: null }]
+                if (last !== undefined && last.role === 'user' && textOfSegments(last.segments) === text) {
+                  return prev
+                }
+                return [...prev, { key: nextKey(), role: 'user', segments: [{ kind: 'text', text }], meta: null }]
               })
             }
           } else if (data.type === 'result') {
@@ -238,7 +291,7 @@ export default function App() {
       if (retry !== null) clearTimeout(retry)
       ws?.close()
     }
-  }, [sessionId, appendMsg, appendError, loadHistory, loadUsage, loadModels])
+  }, [sessionId, appendError, loadHistory, loadUsage, loadModels, patchToolResults])
 
   const selectSession = useCallback((id: string) => {
     setSessionId(id)
@@ -248,7 +301,7 @@ export default function App() {
   const sendPrompt = useCallback(
     (text: string) => {
       if (sessionId === null) return
-      appendMsg({ role: 'user', text, meta: null })
+      appendMsg({ role: 'user', segments: [{ kind: 'text', text }], meta: null })
       post(`/api/v1/sessions/${sessionId}/prompt`, { text }).catch((e: Error) => appendError(e.message))
     },
     [sessionId, appendMsg, appendError],

@@ -266,6 +266,64 @@
   word-break: break-word;
 }
 .a-meta { margin-top: 4px; font-size: var(--text-xs); color: var(--color-text-faint); }
+
+/* 工具行（同类项目 ToolRow 的形状）：细边小卡，可展开入参/输出 */
+.tool-row {
+  margin-top: 8px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  overflow: hidden;
+}
+.tool-row summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 6px 10px;
+  cursor: pointer;
+  list-style: none;
+  min-width: 0;
+}
+.tool-row summary::-webkit-details-marker { display: none; }
+.tool-row summary.no-expand { cursor: default; }
+.tool-row summary:hover { background: var(--color-hover); }
+.tool-status {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-full);
+  background: var(--color-text-faint);
+}
+.tool-row.pending .tool-status { animation: pulse 1.2s ease-in-out infinite; }
+.tool-row.ok .tool-status { background: var(--color-success); }
+.tool-row.error .tool-status { background: var(--color-danger); }
+.tool-name {
+  flex: none;
+  font: 500 var(--text-xs) var(--font-mono);
+  color: var(--color-text);
+}
+.tool-sum {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tool-detail { border-top: 1px solid var(--color-line); }
+.tool-detail pre {
+  margin: 0;
+  padding: 8px 10px;
+  font: var(--text-xs) / 1.6 var(--font-mono);
+  background: var(--color-surface-sunken);
+  max-height: 240px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.tool-detail pre + pre { border-top: 1px solid var(--color-line); }
+.tool-detail .tool-out.err { color: var(--color-danger); }
 .a-msg.err .msg { color: var(--color-danger); }
 
 /* ── Composer（Composer.vue .composer-card）：大圆角卡片 + 焦点环 ── */
