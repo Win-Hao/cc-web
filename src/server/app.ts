@@ -11,7 +11,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { randomUUID } from 'node:crypto'
 import { tmpdir } from 'node:os'
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { readdir, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
@@ -41,6 +41,8 @@ export interface AppDeps {
   webRoot?: string
   /** 自定义会话名 sidecar（M55 重命名）；默认 ~/.cc-web/session-names.json */
   namesPath?: string
+  /** ~/.claude 根（M58 导出诊断包要拿 file-history / image-cache / todos）；测试注入 */
+  claudeHome?: string
 }
 
 const HISTORY_DEFAULT_LIMIT = 50
@@ -280,21 +282,65 @@ export function createApp(deps: AppDeps) {
   })
 
   /**
-   * M57：导出完整会话数据 —— tar.gz 打包 projects 里属于该会话的全部文件
-   * （主 jsonl + <id>/ 目录里的 subagents 转写等）。CC 没有可编程的导出
-   * 通道（控制协议无 export subtype；TUI /export 是交互专用），所以打包
-   * 落盘数据是唯一完整的导出。
+   * M57/M58：导出会话诊断包（对齐参考实现的 session export：会话目录
+   * 递归打包 + manifest）。CC 没有可编程导出通道，会话数据分散四处，
+   * 全部收进 staging 再 tar.gz：
+   *   transcript/    主 jsonl + <id>/（subagents 转写等）
+   *   file-history/  ~/.claude/file-history/<id>（rewind 文件快照）
+   *   image-cache/   ~/.claude/image-cache/<id>（粘贴图）
+   *   todos/         ~/.claude/todos/<id>*
+   *   manifest.json  会话/环境元数据 + 实际包含的 sections
    */
   app.get('/api/v1/sessions/:id/archive', async (c) => {
     const id = c.req.param('id')
     const file = await findSessionFile(deps.projectsRoot, id)
     if (file === null) return c.json(fail(40401, 'session not found'))
-    const slugDir = dirname(file)
-    const entries = [basename(file)]
-    if (existsSync(join(slugDir, id))) entries.push(id)
+    const claudeHome = deps.claudeHome ?? join(homedir(), '.claude')
+    const staging = mkdtempSync(join(tmpdir(), 'cc-web-export-'))
     const tmp = join(tmpdir(), `cc-web-archive-${randomUUID()}.tar.gz`)
     try {
-      await promisify(execFile)('tar', ['-czf', tmp, '-C', slugDir, ...entries])
+      const sections: string[] = ['transcript']
+      mkdirSync(join(staging, 'transcript'), { recursive: true })
+      cpSync(file, join(staging, 'transcript', basename(file)))
+      const sessionDir = join(dirname(file), id)
+      if (existsSync(sessionDir)) cpSync(sessionDir, join(staging, 'transcript', id), { recursive: true })
+      for (const extra of ['file-history', 'image-cache'] as const) {
+        const src = join(claudeHome, extra, id)
+        if (!existsSync(src)) continue
+        cpSync(src, join(staging, extra), { recursive: true })
+        sections.push(extra)
+      }
+      const todosDir = join(claudeHome, 'todos')
+      if (existsSync(todosDir)) {
+        const mine = readdirSync(todosDir).filter((f) => f.startsWith(id))
+        if (mine.length > 0) {
+          mkdirSync(join(staging, 'todos'), { recursive: true })
+          for (const f of mine) cpSync(join(todosDir, f), join(staging, 'todos', f))
+          sections.push('todos')
+        }
+      }
+      // manifest：会话时间线 + 环境（参考实现的 manifest 形状裁剪版）
+      const parsed = await parseSessionFile(file)
+      const first = parsed.entries.find((e) => e.timestamp !== null)
+      const last = [...parsed.entries].reverse().find((e) => e.timestamp !== null)
+      const cwdEntry = parsed.entries.find((e) => e.cwd !== null)
+      const names = readNames()
+      const manifest = {
+        session_id: id,
+        exported_at: new Date().toISOString(),
+        exported_by: 'cc-web',
+        name: names[id] ?? null,
+        cwd: cwdEntry?.cwd ?? null,
+        first_activity: first?.timestamp ?? null,
+        last_activity: last?.timestamp ?? null,
+        entry_count: parsed.entries.length,
+        mainline_count: parsed.mainline.length,
+        os: `${process.platform} ${process.arch}`,
+        node: process.version,
+        sections,
+      }
+      writeFileSync(join(staging, 'manifest.json'), JSON.stringify(manifest, null, 2))
+      await promisify(execFile)('tar', ['-czf', tmp, '-C', staging, '.'])
       const buf = readFileSync(tmp)
       c.header('content-type', 'application/gzip')
       c.header('content-disposition', `attachment; filename="${id}.tar.gz"`)
@@ -303,6 +349,7 @@ export function createApp(deps: AppDeps) {
       return c.json(fail(50004, err instanceof Error ? err.message : 'archive failed'))
     } finally {
       rmSync(tmp, { force: true })
+      rmSync(staging, { recursive: true, force: true })
     }
   })
 

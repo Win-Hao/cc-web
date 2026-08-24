@@ -93,29 +93,70 @@ describe('会话重命名（M55）', () => {
   })
 })
 
-describe('GET /sessions/:id/archive（M57：完整会话数据打包）', () => {
-  it('tar.gz 里有主 jsonl 和 subagents 目录；不存在的会话 40401', async () => {
+describe('GET /sessions/:id/archive（M57/M58：会话诊断包，对齐参考实现）', () => {
+  it('打包转写 + file-history + image-cache + todos + manifest.json；缺哪个跳哪个', async () => {
     const root = tmp()
+    const claudeHome = tmp()
     const slug = join(root, '-tmp-arch')
     mkdirSync(join(slug, 'e1', 'subagents'), { recursive: true })
-    writeFileSync(join(slug, 'e1.jsonl'), JSON.stringify({ type: 'user', uuid: 'u1', parentUuid: null, message: { role: 'user', content: 'hi' } }) + '\n')
+    writeFileSync(
+      join(slug, 'e1.jsonl'),
+      JSON.stringify({ type: 'user', uuid: 'u1', parentUuid: null, timestamp: '2026-08-25T00:00:00.000Z', cwd: '/w', message: { role: 'user', content: 'hi' } }) + '\n' +
+      JSON.stringify({ type: 'assistant', uuid: 'a1', parentUuid: 'u1', timestamp: '2026-08-25T00:01:00.000Z', cwd: '/w', message: { role: 'assistant', content: [{ type: 'text', text: 'ok' }] } }) + '\n',
+    )
     writeFileSync(join(slug, 'e1', 'subagents', 'agent-x.jsonl'), '{}\n')
-    const app = createApp({ projectsRoot: root, namesPath: join(root, 'n.json') })
+    mkdirSync(join(claudeHome, 'file-history', 'e1'), { recursive: true })
+    writeFileSync(join(claudeHome, 'file-history', 'e1', 'abc@v1'), 'snapshot')
+    mkdirSync(join(claudeHome, 'image-cache', 'e1'), { recursive: true })
+    writeFileSync(join(claudeHome, 'image-cache', 'e1', '1.png'), 'png')
+    mkdirSync(join(claudeHome, 'todos'), { recursive: true })
+    writeFileSync(join(claudeHome, 'todos', 'e1-agent-e1.json'), '[]')
+    writeFileSync(join(claudeHome, 'todos', 'other.json'), '[]')
+    const app = createApp({ projectsRoot: root, namesPath: join(root, 'n.json'), claudeHome })
 
     const res = await app.request('/api/v1/sessions/e1/archive')
     expect(res.headers.get('content-type')).toContain('gzip')
     const buf = Buffer.from(await res.arrayBuffer())
-    expect(buf[0]).toBe(0x1f) // gzip magic
-    expect(buf[1]).toBe(0x8b)
     const out = join(root, 'out.tar.gz')
     writeFileSync(out, buf)
     const { execFileSync } = await import('node:child_process')
     const listing = execFileSync('tar', ['-tzf', out]).toString()
-    expect(listing).toContain('e1.jsonl')
-    expect(listing).toContain('subagents/agent-x.jsonl')
+    expect(listing).toContain('transcript/e1.jsonl')
+    expect(listing).toContain('transcript/e1/subagents/agent-x.jsonl')
+    expect(listing).toContain('file-history/abc@v1')
+    expect(listing).toContain('image-cache/1.png')
+    expect(listing).toContain('todos/e1-agent-e1.json')
+    expect(listing).not.toContain('other.json')
+    expect(listing).toContain('manifest.json')
+
+    // manifest 内容抽出来核一眼
+    const extractDir = join(root, 'x')
+    mkdirSync(extractDir)
+    execFileSync('tar', ['-xzf', out, '-C', extractDir, 'manifest.json'])
+    const manifest = JSON.parse(String(execFileSync('cat', [join(extractDir, 'manifest.json')]))) as Record<string, unknown>
+    expect(manifest.session_id).toBe('e1')
+    expect(manifest.cwd).toBe('/w')
+    expect(manifest.first_activity).toBe('2026-08-25T00:00:00.000Z')
+    expect(manifest.last_activity).toBe('2026-08-25T00:01:00.000Z')
+    expect(Array.isArray(manifest.sections)).toBe(true)
 
     const missing = await app.request('/api/v1/sessions/zzzz/archive')
     expect(((await missing.json()) as { code: number }).code).toBe(40401)
+  })
+
+  it('只有主 jsonl 也能打包（可选目录全缺）', async () => {
+    const root = tmp()
+    const slug = join(root, '-tmp-min')
+    mkdirSync(slug, { recursive: true })
+    writeFileSync(join(slug, 'e2.jsonl'), JSON.stringify({ type: 'user', uuid: 'u1', parentUuid: null, message: { role: 'user', content: 'hi' } }) + '\n')
+    const app = createApp({ projectsRoot: root, namesPath: join(root, 'n.json'), claudeHome: tmp() })
+    const res = await app.request('/api/v1/sessions/e2/archive')
+    const out = join(root, 'out2.tar.gz')
+    writeFileSync(out, Buffer.from(await res.arrayBuffer()))
+    const { execFileSync } = await import('node:child_process')
+    const listing = execFileSync('tar', ['-tzf', out]).toString()
+    expect(listing).toContain('transcript/e2.jsonl')
+    expect(listing).toContain('manifest.json')
   })
 })
 
