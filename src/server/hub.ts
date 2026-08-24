@@ -47,6 +47,17 @@ export class SessionHub {
     return (this.buffers.get(sessionId) ?? []).filter((e) => e.seq > sinceSeq)
   }
 
+  /**
+   * 回收一个 session 的留存（M16 防泄漏）：还有订阅者（标签页开着）就不动 ——
+   * 断线补发还要靠 buffer；没人听了才删。引擎死亡时由 registry 调。
+   */
+  prune(sessionId: string): void {
+    if ((this.listeners.get(sessionId)?.size ?? 0) > 0) return
+    this.buffers.delete(sessionId)
+    this.seqs.delete(sessionId)
+    this.listeners.delete(sessionId)
+  }
+
   subscribe(sessionId: string, listener: HubListener): () => void {
     let set = this.listeners.get(sessionId)
     if (set === undefined) {

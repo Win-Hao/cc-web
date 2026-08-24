@@ -33,7 +33,7 @@ function setup(opts: { withMarker: boolean }) {
   return { dir, marker, stubOut }
 }
 
-function runHook(marker: string, stubOut: string) {
+function runHook(marker: string, stubOut: string, stdin?: string) {
   return spawnSync(process.execPath, [HOOK], {
     env: {
       ...process.env,
@@ -41,8 +41,18 @@ function runHook(marker: string, stubOut: string) {
       CC_WEB_SERVER_ENTRY: STUB,
       CC_WEB_STUB_OUT: stubOut,
     },
+    input: stdin ?? '',
     timeout: 15000,
   })
+}
+
+function waitStubOut(stubOut: string): { argv: string[] } {
+  const deadline = Date.now() + 5000
+  while (!existsSync(stubOut)) {
+    if (Date.now() > deadline) throw new Error('server entry was not spawned')
+    spawnSync('sleep', ['0.05'])
+  }
+  return JSON.parse(readFileSync(stubOut, 'utf8')) as { argv: string[] }
 }
 
 describe('SessionEnd hook', () => {
@@ -62,13 +72,32 @@ describe('SessionEnd hook', () => {
     expect(existsSync(marker)).toBe(false)
 
     // 服务器入口被以 --resume abc-123 拉起（stub 把 argv 落盘）
-    const deadline = Date.now() + 5000
-    while (!existsSync(stubOut)) {
-      if (Date.now() > deadline) throw new Error('server entry was not spawned')
-      spawnSync('sleep', ['0.05'])
-    }
-    const started = JSON.parse(readFileSync(stubOut, 'utf8')) as { argv: string[] }
+    const started = waitStubOut(stubOut)
     expect(started.argv).toContain('--resume')
     expect(started.argv).toContain('abc-123')
+  })
+
+  it('stdin 的 hook 输入 JSON 优先于标记文件里的 session_id（M16）', () => {
+    const { marker, stubOut } = setup({ withMarker: true }) // 标记里是 abc-123
+    const res = runHook(marker, stubOut, JSON.stringify({ session_id: 'stdin-999' }))
+    expect(res.status).toBe(0)
+    expect(waitStubOut(stubOut).argv).toContain('stdin-999')
+  })
+
+  it('标记文件损坏 → 不崩、不启动、标记照删（M16）', () => {
+    const { marker, stubOut } = setup({ withMarker: false })
+    writeFileSync(marker, '{corrupt json!!')
+    const res = runHook(marker, stubOut)
+    expect(res.status).toBe(0)
+    expect(existsSync(stubOut)).toBe(false)
+    expect(existsSync(marker)).toBe(false) // 坏标记也删，不留着反复触发
+  })
+
+  it('标记损坏但 stdin 有 session_id → 照样交接（M16）', () => {
+    const { marker, stubOut } = setup({ withMarker: false })
+    writeFileSync(marker, 'not json')
+    const res = runHook(marker, stubOut, JSON.stringify({ session_id: 'from-cc' }))
+    expect(res.status).toBe(0)
+    expect(waitStubOut(stubOut).argv).toContain('from-cc')
   })
 })

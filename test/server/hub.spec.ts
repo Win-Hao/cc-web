@@ -57,3 +57,21 @@ describe('SessionHub', () => {
     expect(hub.replay('s1', 0).map((e) => e.seq)).toEqual([3, 4, 5])
   })
 })
+
+describe('prune（M16 防泄漏）', () => {
+  it('没有订阅者 → 留存和 seq 一起删（seq 从头再来）', () => {
+    const hub = new SessionHub()
+    hub.publish('s1', 'message', { n: 1 })
+    hub.prune('s1')
+    expect(hub.replay('s1', 0)).toEqual([])
+    expect(hub.publish('s1', 'message', { n: 2 }).seq).toBe(1)
+  })
+
+  it('还有订阅者（标签页开着）→ 不删，断线补发还要用', () => {
+    const hub = new SessionHub()
+    hub.publish('s1', 'message', { n: 1 })
+    hub.subscribe('s1', () => {})
+    hub.prune('s1')
+    expect(hub.replay('s1', 0)).toHaveLength(1)
+  })
+})

@@ -67,7 +67,9 @@ export async function startServer(deps: BootstrapDeps): Promise<BootResult> {
     token,
     url: `http://${host}:${held.port}/#token=${token}`,
     close: async () => {
+      // 顺序：先停回收循环，再杀引擎（子进程不遗孤），最后关 HTTP
       clearInterval(sweeper)
+      await registry.stopAll()
       await held.close()
     },
   }

@@ -197,6 +197,10 @@ export class SessionRegistry {
       this.cancelAllApprovals(sessionId)
       this.initialized.delete(sessionId)
       this.setState(sessionId, 'idle')
+      // 防泄漏（M16）：state 回默认值后表项可删（get 缺省就是 idle）；
+      // hub 留存只在没有订阅者时回收（断线补发还要用）
+      this.states.delete(sessionId)
+      this.hub.prune(sessionId)
     })
     await engine.start()
     this.touch(sessionId)
@@ -213,6 +217,14 @@ export class SessionRegistry {
       stop: () => engine.stop(),
     })
     return engine
+  }
+
+  /**
+   * 停掉所有引擎（M16：服务器 close 的一部分）。stop() 走进程组杀，
+   * 各引擎的 exit 处理器负责清表/清审批/清池。
+   */
+  async stopAll(): Promise<void> {
+    await Promise.all([...this.engines.values()].map((e) => e.stop()))
   }
 
   /** 发提示词。非 idle 直接拒绝（R7）。 */
