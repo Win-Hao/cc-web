@@ -77,9 +77,13 @@ export class ApprovalExpiredError extends Error {
   }
 }
 
-/** 审批决定：PermissionResult 形状（sdk.d.ts） */
+/**
+ * 审批决定：PermissionResult 形状（sdk.d.ts）。
+ * updatedInput：AskUserQuestion 等交互工具的应答通道 —— allow 时把
+ * 用户的选择塞回工具入参（{questions, answers, response?}）。
+ */
 export type ApprovalDecision =
-  | { behavior: 'allow' }
+  | { behavior: 'allow'; updatedInput?: Record<string, unknown> }
   | { behavior: 'deny'; message: string }
 
 type ApprovalOutcome = 'allow' | 'deny' | 'timeout' | 'cancelled'

@@ -19,6 +19,7 @@ import { Chat } from './components/Chat'
 import { Composer } from './components/Composer'
 import { ApprovalDialog } from './components/ApprovalDialog'
 import { NewSessionDialog } from './components/NewSessionDialog'
+import { QuestionDialog } from './components/QuestionDialog'
 import type { ProjectChoice } from './components/NewSessionDialog'
 
 let keySeq = 0
@@ -323,6 +324,18 @@ export default function App() {
     [sessionId, approval, appendError],
   )
 
+  /** AskUserQuestion：allow + updatedInput 把答案塞回工具入参 */
+  const answerQuestion = useCallback(
+    (updatedInput: Record<string, unknown>) => {
+      if (sessionId === null || approval === null) return
+      post(`/api/v1/sessions/${sessionId}/approvals/${approval.requestId}`, {
+        behavior: 'allow',
+        updatedInput,
+      }).catch((e: Error) => appendError(e.message))
+    },
+    [sessionId, approval, appendError],
+  )
+
   /* ── 新建会话 ── */
   const projects = useMemo<ProjectChoice[]>(() => {
     const seen = new Set<string>()
@@ -421,7 +434,16 @@ export default function App() {
           onInterrupt={interrupt}
         />
       </div>
-      {approval !== null && <ApprovalDialog approval={approval} onDecide={decideApproval} />}
+      {approval !== null &&
+        (approval.tool_name === 'AskUserQuestion' ? (
+          <QuestionDialog
+            approval={approval}
+            onAnswer={answerQuestion}
+            onDeny={() => decideApproval('deny')}
+          />
+        ) : (
+          <ApprovalDialog approval={approval} onDecide={decideApproval} />
+        ))}
       {showNewDialog && (
         <NewSessionDialog
           projects={projects}

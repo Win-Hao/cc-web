@@ -228,9 +228,16 @@ export function createApp(deps: AppDeps) {
       typeof body === 'object' && body !== null
         ? (body as Record<string, unknown>).message
         : undefined
+    // AskUserQuestion 等交互工具：allow 时带 updatedInput 把答案塞回入参
+    const updatedInput =
+      typeof body === 'object' && body !== null
+        ? (body as Record<string, unknown>).updatedInput
+        : undefined
     const decision =
       behavior === 'allow'
-        ? ({ behavior: 'allow' } as const)
+        ? typeof updatedInput === 'object' && updatedInput !== null
+          ? ({ behavior: 'allow', updatedInput: updatedInput as Record<string, unknown> } as const)
+          : ({ behavior: 'allow' } as const)
         : ({
             behavior: 'deny',
             message: typeof message === 'string' ? message : 'denied by user',
