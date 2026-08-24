@@ -119,6 +119,13 @@ TUI 显示的生成名只存在进程级注册表（`~/.claude/sessions/<pid>.js
 - 实时流的 thinking 增量：`stream_event` 的 `content_block_delta` 帧，
   `delta.type === 'thinking_delta'`，字段是 `delta.thinking`（不是 text）。
 
+**tool_use 的流式帧**（M50 真机实测，2026-08）：`--include-partial-messages`
+下工具调用也走 stream_event —— `content_block_start` 帧就带
+`content_block: {type:'tool_use', id, name, input:{}}`（工具名此刻已知，
+UI 可立即出标签），随后 `content_block_delta` 的
+`delta: {type:'input_json_delta', partial_json}` 增量拼出入参 JSON
+（首帧可能是空串）。前端对未闭合 JSON 按字段正则抽取即可边流边显示。
+
 **stdin 的 user 帧接受 image 块**（M43 真机实测，2026-08）：
 `{type:'user', message:{role:'user', content:[{type:'image', source:{type:'base64',
 media_type, data}}, {type:'text', text}]}}` —— 引擎正确识图（发红色 PNG 问

@@ -14,7 +14,7 @@ import { humanText, segmentsFromContent, textOfSegments, toolResultsFromContent 
 import type { ToolResultInfo } from './lib/segments'
 import type {
   Approval, ChatMsg, HistoryMessage, HubEvent, ImageRef, ModelOption, ProjectChoice, SessionState,
-  SessionSummary, ToolSeg, TurnStatus,
+  SessionSummary, StreamTool, ToolSeg, TurnStatus,
 } from './types'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
@@ -52,6 +52,8 @@ export default function App() {
   const [msgs, setMsgs] = useState<ChatMsg[]>([])
   const [stream, setStream] = useState('')
   const [streamThinking, setStreamThinking] = useState('')
+  /** 正在被模型生成的工具调用（M50）：content_block_start 就出标签，不等整条消息 */
+  const [streamTools, setStreamTools] = useState<StreamTool[]>([])
   const [state, setState] = useState<SessionState>('idle')
   const [approval, setApproval] = useState<Approval | null>(null)
   const [usage, setUsage] = useState('')
@@ -331,6 +333,7 @@ export default function App() {
     setMsgs([])
     setStream('')
     setStreamThinking('')
+    setStreamTools([])
     thinkingStartRef.current = null
     turnStartRef.current = null
     setTurnStart(null)
@@ -400,7 +403,12 @@ export default function App() {
         }
         case 'delta': {
           const evt = data.event as
-            | { type?: string; delta?: { type?: string; text?: string; thinking?: string } }
+            | {
+                type?: string
+                index?: number
+                content_block?: { type?: string; name?: string }
+                delta?: { type?: string; text?: string; thinking?: string; partial_json?: string }
+              }
             | undefined
           if (evt?.type === 'content_block_delta' && evt.delta?.type === 'text_delta') {
             setSawContent(true)
@@ -409,6 +417,24 @@ export default function App() {
             if (thinkingStartRef.current === null) thinkingStartRef.current = Date.now()
             setSawContent(true)
             setStreamThinking((s) => s + (evt.delta?.thinking ?? ''))
+          } else if (
+            evt?.type === 'content_block_start' &&
+            evt.content_block?.type === 'tool_use' &&
+            typeof evt.content_block.name === 'string'
+          ) {
+            // 工具名在这帧就有 —— 立刻出「Bash · …」标签（M50）
+            const name = evt.content_block.name
+            const index = typeof evt.index === 'number' ? evt.index : -1
+            setSawContent(true)
+            setStreamTools((prev) => [...prev, { index, name, json: '' }])
+          } else if (evt?.type === 'content_block_delta' && evt.delta?.type === 'input_json_delta') {
+            const chunk = evt.delta.partial_json ?? ''
+            if (chunk !== '') {
+              const index = typeof evt.index === 'number' ? evt.index : -1
+              setStreamTools((prev) =>
+                prev.map((st) => (st.index === index ? { ...st, json: st.json + chunk } : st)),
+              )
+            }
           }
           break
         }
@@ -447,6 +473,7 @@ export default function App() {
             if (segments.length > 0) {
               setStream('')
               setStreamThinking('')
+              setStreamTools([])
               setSawContent(true)
               // 本轮实时思考的时长归到刚 finalize 的 thinking 段（M46）
               if (thinkingStartRef.current !== null && segments.some((sg) => sg.kind === 'thinking')) {
@@ -491,6 +518,7 @@ export default function App() {
           } else if (data.type === 'result') {
             setStream('')
             setStreamThinking('')
+            setStreamTools([])
             thinkingStartRef.current = null
             setSawContent(false)
             // result 帧自带本回合统计（duration_ms / usage.output_tokens / total_cost_usd）
@@ -775,6 +803,7 @@ export default function App() {
               messages={msgs}
               streamText={stream}
               streamThinking={streamThinking}
+              streamTools={streamTools}
               turn={{
                 running: state !== 'idle',
                 preparing: state !== 'idle' && !sawContent,

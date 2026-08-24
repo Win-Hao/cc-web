@@ -4,7 +4,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Check, ChevronRight, LoaderCircle, Sparkles, X } from 'lucide-react'
-import type { ChatMsg, ImageRef, ToolSeg, TurnStatus } from '../types'
+import type { ChatMsg, ImageRef, StreamTool, ToolSeg, TurnStatus } from '../types'
 import { formatElapsedMs } from '../lib/format'
 import { textOfSegments } from '../lib/segments'
 import { Markdown } from './Markdown'
@@ -118,28 +118,59 @@ const FAMILY_KEY: Record<Exclude<ToolFamily, 'other'>, 'toolRun' | 'toolRead' | 
 
 function familyTitle(seg: ToolSeg): string {
   const fam = toolFamily(seg.name)
-  return fam === 'other' ? seg.name : t(FAMILY_KEY[fam])
+  if (fam !== 'other') return t(FAMILY_KEY[fam])
+  // MCP 工具名去前缀、下划线转空格:mcp__media__generate → media generate
+  return seg.name.startsWith('mcp__') ? seg.name.slice(5).replace(/__/g, ' ').replace(/_/g, ' ') : seg.name
 }
 
 /** family 相关的元信息：文件名 / pattern / url / 命令…；带结果统计 */
-function toolMeta(seg: ToolSeg): { main: string; stat: string } {
+function toolMeta(seg: ToolSeg): { main: string; stat: string; italic: boolean } {
   const fam = toolFamily(seg.name)
   const i = (typeof seg.input === 'object' && seg.input !== null ? seg.input : {}) as Record<string, unknown>
   const str = (k: string): string => (typeof i[k] === 'string' ? (i[k] as string) : '')
   const base = (path: string): string => path.split('/').pop() ?? path
   const lines = seg.result === null || seg.result === '' ? 0 : seg.result.split('\n').length
   if (fam === 'read') {
-    return { main: base(str('file_path') || str('path')), stat: seg.status === 'ok' && lines > 0 ? t('toolLines', { n: lines }) : '' }
+    return { main: base(str('file_path') || str('path')), stat: seg.status === 'ok' && lines > 0 ? t('toolLines', { n: lines }) : '', italic: false }
   }
-  if (fam === 'edit' || fam === 'write') return { main: base(str('file_path') || str('path')), stat: '' }
+  if (fam === 'edit' || fam === 'write') return { main: base(str('file_path') || str('path')), stat: '', italic: false }
   if (fam === 'search') {
     const main = str('pattern') || str('query')
     const path = str('path')
-    return { main: path !== '' ? `${main}  ${base(path)}` : main, stat: seg.status === 'ok' && lines > 0 ? t('toolResults', { n: lines }) : '' }
+    return { main: path !== '' ? `${main}  ${base(path)}` : main, stat: seg.status === 'ok' && lines > 0 ? t('toolResults', { n: lines }) : '', italic: false }
   }
-  if (fam === 'fetch') return { main: str('url'), stat: '' }
-  if (fam === 'run') return { main: str('description') || str('command').replace(/\s+/g, ' '), stat: '' }
-  return { main: seg.summary, stat: '' }
+  if (fam === 'fetch') return { main: str('url'), stat: '', italic: false }
+  if (fam === 'run') {
+    const desc = str('description')
+    if (desc !== '') return { main: desc, stat: '', italic: true }
+    return { main: str('command').replace(/\s+/g, ' '), stat: '', italic: false }
+  }
+  const desc = str('description')
+  if (desc !== '') return { main: desc, stat: '', italic: true }
+  return { main: seg.summary, stat: '', italic: false }
+}
+
+/** 流式工具占位（M50）：入参 JSON 还没停,能解析多少解析多少 */
+function partialToolInput(json: string): Record<string, unknown> {
+  try {
+    return JSON.parse(json) as Record<string, unknown>
+  } catch {
+    /* 还没闭合,退回逐字段抽取 */
+  }
+  const out: Record<string, unknown> = {}
+  for (const k of ['description', 'command', 'file_path', 'pattern', 'url', 'query', 'path', 'skill', 'prompt']) {
+    const m = new RegExp(`"${k}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)`).exec(json)
+    if (m !== null) out[k] = m[1]!.replace(/\\n/g, ' ').replace(/\\"/g, '"')
+  }
+  return out
+}
+
+function streamToolSeg(st: StreamTool): ToolSeg {
+  return {
+    kind: 'tool', id: null, name: st.name, summary: '', detail: '',
+    input: partialToolInput(st.json), status: 'pending', result: null,
+    images: [], subCount: 0, agent: null,
+  }
 }
 
 function StatusTile({ status, pending }: { status: ToolSeg['status']; pending: boolean }) {
@@ -234,7 +265,7 @@ function PlainToolCard({ seg }: { seg: ToolSeg }) {
   const expandable =
     (seg.detail !== '' && seg.detail !== '{}') || (seg.result !== null && seg.result !== '') || seg.images.length > 0
   return (
-    <div className="mt-2">
+    <div className="cc-tool-row mt-2">
       <button
         className={cn(
           'flex w-full items-center gap-2 rounded-md py-0.5 pr-2 pl-0.5 text-left select-none',
@@ -243,11 +274,22 @@ function PlainToolCard({ seg }: { seg: ToolSeg }) {
         onClick={() => expandable && setOpen((o) => !o)}
       >
         <StatusTile pending={pending} status={seg.status} />
-        <span className={cn('shrink-0 text-[11px] font-medium tracking-wide text-foreground uppercase', pending && 'shimmer-text')}>
+        <span
+          className={cn(
+            'shrink-0 text-[11px] font-medium tracking-wide text-foreground',
+            !seg.name.startsWith('mcp__') && 'uppercase',
+            pending && 'shimmer-text',
+          )}
+        >
           {familyTitle(seg)}
         </span>
         {meta.main !== '' && (
-          <span className={cn('min-w-0 flex-1 truncate text-xs text-muted-foreground', toolFamily(seg.name) === 'run' && seg.input !== null && 'font-mono')}>
+          <span
+            className={cn(
+              'min-w-0 flex-1 truncate text-xs text-muted-foreground',
+              meta.italic ? 'italic' : toolFamily(seg.name) === 'run' && 'font-mono',
+            )}
+          >
             {meta.main}
           </span>
         )}
@@ -327,6 +369,7 @@ interface Props {
   messages: ChatMsg[]
   streamText: string
   streamThinking: string
+  streamTools: StreamTool[]
   turn: TurnStatus
   sessionId: string
 }
@@ -376,6 +419,8 @@ interface TurnNode {
   work: RenderItem[]
   finals: RenderItem[]
   seconds: number | null
+  /** 有工具停在 pending（中断/取消的轮）→ 头部显示「已取消」 */
+  canceled: boolean
 }
 type Node = RenderItem | TurnNode
 
@@ -417,11 +462,19 @@ function buildNodes(items: RenderItem[], liveTailOpen: boolean): Node[] {
       nodes.push(...work, ...finals)
       return
     }
-    const lastMsg = [...acc].reverse().find((it): it is { kind: 'msg'; m: ChatMsg } => it.kind === 'msg')
-    const endTs = lastMsg?.m.ts ?? null
+    let endTs: number | null = null
+    for (let i = acc.length - 1; i >= 0 && endTs === null; i--) {
+      const it = acc[i]!
+      const ms = it.kind === 'msg' ? [it.m] : it.msgs
+      for (let j = ms.length - 1; j >= 0 && endTs === null; j--) endTs = ms[j]!.ts
+    }
     const seconds =
       userTs !== null && endTs !== null && endTs > userTs ? Math.max(1, Math.round((endTs - userTs) / 1000)) : null
-    nodes.push({ kind: 'turn', key: `turn-${acc[0]!.kind === 'msg' ? acc[0]!.m.key : acc[0]!.key}`, work, finals, seconds })
+    const canceled = work.some((it) => {
+      const msgs = it.kind === 'msg' ? [it.m] : it.msgs
+      return msgs.some((wm) => wm.segments.some((sg) => sg.kind === 'tool' && sg.status === 'pending'))
+    })
+    nodes.push({ kind: 'turn', key: `turn-${acc[0]!.kind === 'msg' ? acc[0]!.m.key : acc[0]!.key}`, work, finals, seconds, canceled })
   }
 
   items.forEach((it, i) => {
@@ -448,7 +501,9 @@ function WorkedTurn({ node, children }: { node: TurnNode; children: React.ReactN
         className="flex cursor-pointer items-center gap-1 rounded-md px-1 py-0.5 text-[13px] text-muted-foreground select-none hover:bg-secondary/60 hover:text-foreground"
         onClick={() => setOpen((o) => !o)}
       >
-        {node.seconds !== null ? t('workedFor', { s: formatElapsedMs(node.seconds * 1000) }) : t('workedPlain')}
+        {node.canceled
+          ? node.seconds !== null ? t('canceledFor', { s: formatElapsedMs(node.seconds * 1000) }) : t('canceledPlain')
+          : node.seconds !== null ? t('workedFor', { s: formatElapsedMs(node.seconds * 1000) }) : t('workedPlain')}
         <ChevronRight className={cn('size-3 text-faint transition-transform duration-150', open && 'rotate-90')} />
       </button>
       <div className={cn('cc-collapsible', open && 'open')}>
@@ -460,7 +515,7 @@ function WorkedTurn({ node, children }: { node: TurnNode; children: React.ReactN
   )
 }
 
-export function Chat({ messages, streamText, streamThinking, turn, sessionId }: Props) {
+export function Chat({ messages, streamText, streamThinking, streamTools, turn, sessionId }: Props) {
   useLang()
   const scrollRef = useRef<HTMLDivElement>(null)
   const nodes = useMemo(
@@ -471,7 +526,7 @@ export function Chat({ messages, streamText, streamThinking, turn, sessionId }: 
   useEffect(() => {
     const el = scrollRef.current
     if (el !== null) el.scrollTop = el.scrollHeight
-  }, [messages, streamText, streamThinking, turn.running])
+  }, [messages, streamText, streamThinking, streamTools.length, turn.running])
 
   const renderItem = (it: RenderItem): React.ReactNode => {
     if (it.kind === 'toolgroup') {
@@ -557,7 +612,7 @@ export function Chat({ messages, streamText, streamThinking, turn, sessionId }: 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto" ref={scrollRef}>
       <div className="mx-auto flex max-w-[760px] flex-col px-4 pt-4 pb-5">
-        {messages.length === 0 && streamText === '' && streamThinking === '' && (
+        {messages.length === 0 && streamText === '' && streamThinking === '' && streamTools.length === 0 && (
           <div className="m-auto py-12 text-center text-[13px] text-faint">
             {t('draftHint')}
           </div>
@@ -572,7 +627,7 @@ export function Chat({ messages, streamText, streamThinking, turn, sessionId }: 
             renderItem(node)
           ),
         )}
-        {(streamText !== '' || streamThinking !== '') && (
+        {(streamText !== '' || streamThinking !== '' || streamTools.length > 0) && (
           <div className="mt-2.5 max-w-[94%] self-start">
             {streamThinking !== '' && <ThinkingBlock streaming text={streamThinking} />}
             {streamText !== '' && (
@@ -580,6 +635,9 @@ export function Chat({ messages, streamText, streamThinking, turn, sessionId }: 
                 <Markdown text={streamText} />
               </div>
             )}
+            {streamTools.map((st) => (
+              <PlainToolCard key={st.index} seg={streamToolSeg(st)} />
+            ))}
           </div>
         )}
         <TurnFooter turn={turn} />

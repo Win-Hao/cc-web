@@ -30,6 +30,13 @@ export interface SearchHit {
   mtime_ms: number
 }
 
+/** 正在被模型生成的工具调用（M50 流式标签）：start 帧给名字,json 增量拼入参 */
+export interface StreamTool {
+  index: number
+  name: string
+  json: string
+}
+
 /** 当前回合的运行状态（M47 footer）：跑 → 准备中/执行中 + 计时；完 → 已完成 + 统计 */
 export interface TurnStatus {
   running: boolean

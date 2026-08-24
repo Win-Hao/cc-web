@@ -308,3 +308,14 @@
   border-radius: 1px;
   animation: cc-caret-blink 1s steps(2, start) infinite;
 }
+
+/* 工具行之间的竖连接线（M50，时间线感） */
+.cc-tool-row { position: relative; }
+.cc-tool-row + .cc-tool-row::before {
+  content: "";
+  position: absolute;
+  left: 12px;
+  top: -7px;
+  height: 6px;
+  border-left: 1px solid var(--border);
+}
