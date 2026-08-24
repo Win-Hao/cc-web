@@ -82,11 +82,35 @@ function UsageBar({ label, win }: { label: string; win: RateWindow }) {
 function PlanUsageDialog({ onClose }: { onClose: () => void }) {
   useLang()
   const [data, setData] = useState<PlanUsage | null | 'loading' | 'error'>('loading')
+  const [refreshing, setRefreshing] = useState(false)
 
   useEffect(() => {
-    api<PlanUsage | null>('/api/v1/plan-usage')
-      .then(setData)
-      .catch(() => setData('error'))
+    let stop = false
+    void (async () => {
+      try {
+        const first = await api<PlanUsage | null>('/api/v1/plan-usage')
+        if (stop) return
+        setData(first)
+        // 服务端给的是缓存（可能在后台刷新中）：数据超过 1 分钟就轮询
+        // 几次接住新值，界面原地更新
+        const last = first?.fetched_at ?? 0
+        if (first === null || Date.now() - last < 60_000) return
+        setRefreshing(true)
+        for (let i = 0; i < 5 && !stop; i++) {
+          await new Promise((r) => setTimeout(r, 2000))
+          const next = await api<PlanUsage | null>('/api/v1/plan-usage')
+          if (stop) return
+          if (next !== null) setData(next)
+          if ((next?.fetched_at ?? 0) !== last) break
+        }
+        if (!stop) setRefreshing(false)
+      } catch {
+        if (!stop) setData('error')
+      }
+    })()
+    return () => {
+      stop = true
+    }
   }, [])
 
   return (
@@ -119,6 +143,7 @@ function PlanUsageDialog({ onClose }: { onClose: () => void }) {
                   {t('updatedAt', {
                     t: new Date(data.fetched_at).toLocaleTimeString(getLang() === 'zh' ? 'zh-CN' : 'en-US', { hour: '2-digit', minute: '2-digit' }),
                   })}
+                  {refreshing && <span className="ml-2 animate-pulse">{t('refreshing')}</span>}
                 </div>
               )}
             </div>

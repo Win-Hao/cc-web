@@ -116,6 +116,53 @@ describe('GET /api/v1/plan-usage（M34 缓存策略）', () => {
     expect(live.sent.length).toBeGreaterThan(sentBefore)
   })
 
+  it('每轮 usage 查询顺手刷新额度缓存（M36：新鲜度 = 最近一轮）', async () => {
+    const engines: FakeEngine[] = []
+    const registry = new SessionRegistry({
+      hub: new SessionHub(),
+      factory: () => {
+        const e = new FakeEngine()
+        engines.push(e)
+        return e
+      },
+    })
+    const app = createApp({ projectsRoot: mkdtempSync(join(tmpdir(), 'cc-web-plan-')), registry })
+    await app.request('/api/v1/plan-usage') // 预热
+    const before = ((await (await app.request('/api/v1/plan-usage')).json()) as { data: { fetched_at: number } }).data.fetched_at
+    await new Promise((r) => setTimeout(r, 5))
+    await registry.ensure('s1')
+    await app.request('/api/v1/sessions/s1/usage') // 每轮 result 后 UI 都会打的请求
+    const after = ((await (await app.request('/api/v1/plan-usage')).json()) as { data: { fetched_at: number } }).data.fetched_at
+    expect(after).toBeGreaterThan(before) // 被顺手刷新了
+  })
+
+  it('过期且没有活引擎：立即回旧值，后台空白引擎刷新（M36）', async () => {
+    const calls: (EngineFactoryOptions | undefined)[] = []
+    const engines: FakeEngine[] = []
+    const registry = new SessionRegistry({
+      hub: new SessionHub(),
+      factory: (_id, opts) => {
+        calls.push(opts)
+        const e = new FakeEngine()
+        engines.push(e)
+        return e
+      },
+    })
+    const app = createApp({
+      projectsRoot: mkdtempSync(join(tmpdir(), 'cc-web-plan-')),
+      registry,
+      planTtlMs: -1,
+    })
+    await app.request('/api/v1/plan-usage') // 预热（spawn #1）
+    const t0 = Date.now()
+    await app.request('/api/v1/plan-usage') // 过期 → 立即回旧值 + 后台 spawn #2
+    expect(Date.now() - t0).toBeLessThan(200)
+    await new Promise((r) => setTimeout(r, 50))
+    expect(calls).toHaveLength(2)
+    expect(calls[1]?.newSessionCwd).toBeTypeOf('string')
+    expect(engines[1]!.stopped).toBe(true) // 后台刷新完即停
+  })
+
   it('缓存未过期时有活引擎也不打扰它', async () => {
     const { app, registry, engines, calls } = setup()
     await app.request('/api/v1/plan-usage') // 预热缓存（spawn 1 次）

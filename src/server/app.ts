@@ -131,6 +131,26 @@ export function createApp(deps: AppDeps) {
   let planRefreshing = false
   const planTtlMs = deps.planTtlMs ?? 5 * 60_000
 
+  /** 后台刷新套餐额度（M36）：单飞；优先借活引擎，没有就空白引擎拿完即停 */
+  function refreshPlanCache(registry: SessionRegistry): void {
+    if (planRefreshing) return
+    planRefreshing = true
+    void (async () => {
+      const live = registry.liveSessionIds()[0]
+      const id = live ?? (await registry.create(homedir()))
+      try {
+        const payload = await registry.getUsage(id)
+        if (payload !== null) planCache = { payload, fetched_at: Date.now() }
+      } finally {
+        if (live === undefined) void registry.get(id)?.stop()
+      }
+    })()
+      .catch(() => {})
+      .finally(() => {
+        planRefreshing = false
+      })
+  }
+
   async function ensureMeta(registry: SessionRegistry): Promise<MetaInfo> {
     if (metaCache !== null) return metaCache
     if (metaInflight === null) {
@@ -407,11 +427,15 @@ export function createApp(deps: AppDeps) {
     // 引擎活着走 get_usage（含官方成本）；拿不到或引擎已回收 → jsonl 聚合
     if (deps.registry?.get(id) !== undefined) {
       const payload = await deps.registry.getUsage(id)
-      const session =
-        typeof payload === 'object' && payload !== null
-          ? (payload as Record<string, unknown>).session
-          : null
-      if (typeof session === 'object' && session !== null) return c.json(ok(session))
+      if (typeof payload === 'object' && payload !== null) {
+        // 顺手刷新套餐额度缓存（M36）：每轮对话结束都会走到这里，
+        // 面板数据新鲜度因此 = 最近一轮，零额外请求
+        if ((payload as Record<string, unknown>).rate_limits != null) {
+          planCache = { payload, fetched_at: Date.now() }
+        }
+        const session = (payload as Record<string, unknown>).session
+        if (typeof session === 'object' && session !== null) return c.json(ok(session))
+      }
     }
     const file = await findSessionFile(deps.projectsRoot, id)
     if (file === null) return c.json(ok(null))
@@ -508,20 +532,7 @@ export function createApp(deps: AppDeps) {
     // SWR（M35）：有缓存就立即返回 —— get_usage 要出网问 Anthropic（秒级），
     // 绝不让面板等它。过期且有活引擎 → 后台刷新，下次打开就是新的。
     if (planCache !== null) {
-      const stale = Date.now() - planCache.fetched_at > planTtlMs
-      const live = registry.liveSessionIds()[0]
-      if (stale && live !== undefined && !planRefreshing) {
-        planRefreshing = true
-        void registry
-          .getUsage(live)
-          .then((payload) => {
-            if (payload !== null) planCache = { payload, fetched_at: Date.now() }
-          })
-          .catch(() => {})
-          .finally(() => {
-            planRefreshing = false
-          })
-      }
+      if (Date.now() - planCache.fetched_at > planTtlMs) refreshPlanCache(registry)
       return c.json(ok(trim(planCache.payload)))
     }
     // 真·冷启动（页面加载的预热还没完成）：等元数据引擎那一次
