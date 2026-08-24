@@ -32,12 +32,13 @@ id（见下面 `approval` 事件），两个撞名，实现时必混。
 | --- | --- | --- |
 | GET | `/api/v1/meta` | 服务器版本、CC 版本、健康检查 |
 | GET | `/api/v1/sessions` | 会话列表（扫 `~/.claude/projects/`） |
+| GET | `/api/v1/sessions/search` | **全文搜索**：`?q=<词>&limit=N`（q ≥2 字符）。按 mtime 新→旧扫、拿够即停；返回 `hits[]`（session + snippet + match_count）。注册必须在 `/sessions/:id` 之前 |
 | POST | `/api/v1/sessions` | 新建会话：`{cwd}` → `{session_id}`（服务器发 uuid，引擎走 `--session-id`） |
 | POST | `/api/v1/sessions` | 新建会话，body 带 `cwd`。服务器生成 uuid 用 `--session-id` 传入，响应同步返回 session id |
 | GET | `/api/v1/sessions/:id` | 会话元信息：cwd、模型、权限模式、状态 |
 | GET | `/api/v1/sessions/:id/history` | 历史消息。**cursor 分页**：`?limit=N&before=<cursor>`，响应带 `has_more`（R9：jsonl 是 append-only，用 cursor 不用 offset） |
 | GET | `/api/v1/sessions/:id/usage` | 本会话 token / 成本聚合 |
-| POST | `/api/v1/sessions/:id/prompt` | 发提示词。并发策略见 R7：运行中拒绝；waiting-approval 也拒绝 |
+| POST | `/api/v1/sessions/:id/prompt` | 发提示词。body `{text, images?}`；images 为 `{media_type, data(base64)}[]`，四种位图、单张 ≤5MB、最多 8 张，有图时 text 可空。并发策略见 R7：运行中拒绝；waiting-approval 也拒绝 |
 | POST | `/api/v1/sessions/:id/interrupt` | 中断（→ `interrupt`） |
 | POST | `/api/v1/sessions/:id/model` | 切模型（→ `set_model`） |
 | POST | `/api/v1/sessions/:id/permission-mode` | 切权限模式 |
