@@ -37,6 +37,29 @@ pnpm test:contract # 契约测试，跑真实 claude，需要登录态
 前端样式体系移植自 同类项目 的 apps/参考实现（MIT）：React + Vite，无组件库，
 design token 见 web/src/styles/tokens.css。
 
+## 交接：TUI ⇄ 浏览器
+
+在 CC 里输入 `/cc-web`（skill 写意图标记）→ 退出 CC → SessionEnd hook
+自动起服务器 `--resume` 本会话并打开浏览器。安装两步：
+
+1. **hook**：`~/.claude/settings.json` 加上
+
+   ```json
+   {
+     "hooks": {
+       "SessionEnd": [
+         { "hooks": [{ "type": "command", "command": "node <本仓库绝对路径>/scripts/session-end-hook.mjs" }] }
+       ]
+     }
+   }
+   ```
+
+2. **skill**（可选，本仓库内用 CC 自带；全局用要拷一份）：
+   `cp -r .claude/skills/cc-web ~/.claude/skills/`
+
+没有标记文件时 hook 静默退出（绝大多数正常退出走这条路），标记读完即删，
+不会反复触发；会话 id 优先取 hook stdin，标记损坏也不影响 CC 退出。
+
 ## 环境
 
 - Node `>=24.15.0`，pnpm `10.33.0`
