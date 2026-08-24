@@ -280,6 +280,14 @@ export class SessionRegistry {
     await this.control(sessionId, { subtype: 'set_permission_mode', mode })
   }
 
+  /**
+   * 合并 flag 层设置（M24）。effortLevel 走这里 —— sdk.d.ts：'max' 是
+   * 会话级的，只在支持的模型上生效，永不落盘。
+   */
+  async applyFlagSettings(sessionId: string, settings: Record<string, unknown>): Promise<void> {
+    await this.control(sessionId, { subtype: 'apply_flag_settings', settings })
+  }
+
   /** list_models 的 response payload（含 models 数组），失败抛 ControlRequestError */
   async listModels(sessionId: string): Promise<unknown> {
     return await this.control(sessionId, { subtype: 'list_models' })

@@ -69,6 +69,11 @@ export interface Approval {
 export interface ModelOption {
   value: string
   label: string
+  description: string | null
+  /** list_models 的 resolvedModel（和 init 帧的 model 对得上） */
+  resolved: string | null
+  supportsEffort: boolean
+  effortLevels: string[]
 }
 
 export interface ProjectChoice {

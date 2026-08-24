@@ -9,16 +9,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, post, token } from './lib/api'
 import { groupName, sessionTitle } from './lib/format'
-import { segmentsFromContent, textOfSegments, toolResultsFromContent } from './lib/segments'
+import { humanText, segmentsFromContent, textOfSegments, toolResultsFromContent } from './lib/segments'
 import type { ToolResultInfo } from './lib/segments'
 import type {
   Approval, ChatMsg, HistoryMessage, HubEvent, ModelOption, ProjectChoice, SessionState,
   SessionSummary, ToolSeg,
 } from './types'
 import { Badge } from '@/components/ui/badge'
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 import { Sidebar } from './components/Sidebar'
 import { Chat } from './components/Chat'
@@ -36,8 +33,6 @@ const STATE_LABEL: Record<SessionState, string> = {
   'waiting-approval': '等待审批',
 }
 
-const PERMISSION_MODES = ['default', 'acceptEdits', 'plan', 'bypassPermissions']
-
 export default function App() {
   const [sessions, setSessions] = useState<SessionSummary[]>([])
   const [sessionsLoading, setSessionsLoading] = useState(true)
@@ -51,6 +46,9 @@ export default function App() {
   const [usage, setUsage] = useState('')
   const [models, setModels] = useState<ModelOption[]>([])
   const [permMode, setPermMode] = useState('default')
+  const [modelValue, setModelValue] = useState<string | null>(null)
+  const [modelResolved, setModelResolved] = useState<string | null>(null)
+  const [effort, setEffort] = useState<string | null>(null)
   const [connected, setConnected] = useState(true)
   const modelsLoadedRef = useRef(false)
   /** 草稿态发出的首条消息：等会话选中、effect 重置完再乐观渲染 + 发送 */
@@ -151,13 +149,26 @@ export default function App() {
   const loadModels = useCallback(async (id: string) => {
     if (modelsLoadedRef.current) return
     try {
-      const d = await api<{ models?: { value?: string; id?: string; displayName?: string; label?: string }[] }>(
-        `/api/v1/sessions/${id}/models`,
-      )
+      const d = await api<{
+        models?: {
+          value?: string; id?: string; displayName?: string; label?: string
+          description?: string; resolvedModel?: string
+          supportsEffort?: boolean; supportedEffortLevels?: string[]
+        }[]
+      }>(`/api/v1/sessions/${id}/models`)
       const opts: ModelOption[] = []
       for (const m of d.models ?? []) {
         const value = m.value ?? m.id
-        if (value !== undefined) opts.push({ value, label: m.displayName ?? m.label ?? value })
+        if (value !== undefined) {
+          opts.push({
+            value,
+            label: m.displayName ?? m.label ?? value,
+            description: m.description ?? null,
+            resolved: m.resolvedModel ?? null,
+            supportsEffort: m.supportsEffort === true,
+            effortLevels: m.supportedEffortLevels ?? [],
+          })
+        }
       }
       setModels(opts)
       modelsLoadedRef.current = true
@@ -229,7 +240,7 @@ export default function App() {
               if (r.text !== '') t.result = r.text
             }
           }
-          const text = textOfSegments(segmentsFromContent(content))
+          const text = humanText(textOfSegments(segmentsFromContent(content)))
           if (text !== '') {
             out.push({ key: nextKey(), role: 'user', segments: [{ kind: 'text', text }], meta: null, sidechain: null })
           }
@@ -248,6 +259,10 @@ export default function App() {
     setMsgs([])
     setStream('')
     setApproval(null)
+    setModelValue(null)
+    setModelResolved(null)
+    setEffort(null)
+    setPermMode('default')
     toolLocRef.current = new Map()
 
     const pending = pendingPromptRef.current
@@ -285,6 +300,12 @@ export default function App() {
         }
         case 'message': {
           const message = data.message as Record<string, unknown> | undefined
+          // init 帧（M24）：把引擎实际在用的模型/权限模式同步进 UI
+          if (data.type === 'system' && data.subtype === 'init') {
+            if (typeof data.model === 'string') setModelResolved(data.model)
+            if (typeof data.permissionMode === 'string') setPermMode(data.permissionMode)
+            break
+          }
           // subagent 的实时帧（M17）：不进主流，计数归到发起它的工具行（Task 等）
           const parentTool = data.parent_tool_use_id
           if (typeof parentTool === 'string' && (data.type === 'assistant' || data.type === 'user')) {
@@ -316,6 +337,7 @@ export default function App() {
                 if (seg.kind === 'tool' && seg.id !== null) toolLocRef.current.set(seg.id, { key, si })
               })
               const model = message.model
+              if (typeof model === 'string') setModelResolved(model)
               setMsgs((prev) => [...prev, {
                 key, role: 'assistant', segments,
                 meta: typeof model === 'string' ? model : null,
@@ -324,7 +346,7 @@ export default function App() {
             }
           } else if (data.type === 'user' && message !== undefined) {
             patchToolResults(toolResultsFromContent(message.content))
-            const text = textOfSegments(segmentsFromContent(message.content))
+            const text = humanText(textOfSegments(segmentsFromContent(message.content)))
             if (text !== '') {
               // 别的标签页发的也渲染；自己发的已乐观渲染 → 和上一条同文本就跳过
               setMsgs((prev) => {
@@ -406,6 +428,45 @@ export default function App() {
       post(`/api/v1/sessions/${sessionId}/prompt`, { text }).catch((e: Error) => appendError(e.message))
     },
     [sessionId, appendMsg, appendError],
+  )
+
+  const pickModel = useCallback(
+    (value: string) => {
+      if (sessionId === null) return
+      const prev = modelValue
+      setModelValue(value)
+      post(`/api/v1/sessions/${sessionId}/model`, { model: value }).catch((e: Error) => {
+        setModelValue(prev)
+        appendError(e.message)
+      })
+    },
+    [sessionId, modelValue, appendError],
+  )
+
+  const pickEffort = useCallback(
+    (level: string) => {
+      if (sessionId === null) return
+      const prev = effort
+      setEffort(level)
+      post(`/api/v1/sessions/${sessionId}/effort`, { effort: level }).catch((e: Error) => {
+        setEffort(prev)
+        appendError(e.message)
+      })
+    },
+    [sessionId, effort, appendError],
+  )
+
+  const pickPermMode = useCallback(
+    (next: string) => {
+      if (sessionId === null) return
+      const prev = permMode
+      setPermMode(next)
+      post(`/api/v1/sessions/${sessionId}/permission-mode`, { mode: next }).catch((e: Error) => {
+        setPermMode(prev) // 切换被拒（或引擎没起来）→ 回滚，不留假状态
+        appendError(e.message)
+      })
+    },
+    [sessionId, permMode, appendError],
   )
 
   const interrupt = useCallback(() => {
@@ -514,44 +575,6 @@ export default function App() {
                 />
                 {connected ? STATE_LABEL[state] : '已断线，重连中…'}
               </Badge>
-              <Select
-                onValueChange={(value) => {
-                  post(`/api/v1/sessions/${sessionId}/model`, { model: value }).catch(
-                    (err: Error) => appendError(err.message),
-                  )
-                }}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="模型" />
-                </SelectTrigger>
-                <SelectContent>
-                  {models.map((m) => (
-                    <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Select
-                value={permMode}
-                onValueChange={(next) => {
-                  const prev = permMode
-                  setPermMode(next)
-                  post(`/api/v1/sessions/${sessionId}/permission-mode`, { mode: next }).catch(
-                    (err: Error) => {
-                      setPermMode(prev) // 切换被拒（或引擎没起来）→ 下拉框回滚，不留假状态
-                      appendError(err.message)
-                    },
-                  )
-                }}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {PERMISSION_MODES.map((m) => (
-                    <SelectItem key={m} value={m}>{m}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
               {usage !== '' && <span className="text-xs text-faint tabular-nums">{usage}</span>}
             </>
           )}
@@ -566,6 +589,14 @@ export default function App() {
               running={state !== 'idle'}
               onSend={sendPrompt}
               onInterrupt={interrupt}
+              permMode={permMode}
+              onPermMode={pickPermMode}
+              models={models}
+              modelValue={modelValue}
+              modelResolved={modelResolved}
+              effort={effort}
+              onModel={pickModel}
+              onEffort={pickEffort}
             />
           </>
         )}

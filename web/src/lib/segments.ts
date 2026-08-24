@@ -97,3 +97,22 @@ function flattenResult(content: unknown): string {
 
 export const textOfSegments = (segs: Segment[]): string =>
   segs.filter((s): s is TextSeg => s.kind === 'text').map((s) => s.text).join('')
+
+/**
+ * 剥掉打头的成对元信息块（<local-command-stdout> / <command-name> /
+ * <local-command-caveat> …，CC 的 bookkeeping 回显），返回剩余人话；
+ * 剥不干净或剥完为空 → ''（调用方跳过整条气泡）。与 server 端
+ * list.ts 的 stripMetaBlocks 同一逻辑。
+ */
+export function humanText(text: string): string {
+  let t = text.trimStart()
+  while (t.startsWith('<')) {
+    const m = /^<([a-zA-Z][\w-]*)[^>]*>/.exec(t)
+    if (m === null) return ''
+    const close = `</${m[1]}>`
+    const end = t.indexOf(close)
+    if (end === -1) return ''
+    t = t.slice(end + close.length).trimStart()
+  }
+  return t
+}

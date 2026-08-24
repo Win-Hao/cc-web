@@ -265,6 +265,23 @@ export function createApp(deps: AppDeps) {
     }
   })
 
+  /** M24：思考程度（effort）。apply_flag_settings 的 effortLevel 通道。 */
+  app.post('/api/v1/sessions/:id/effort', async (c) => {
+    if (deps.registry === undefined) return c.json(fail(50001, 'registry not configured'))
+    const body: unknown = await c.req.json().catch(() => null)
+    const effort =
+      typeof body === 'object' && body !== null
+        ? (body as Record<string, unknown>).effort
+        : null
+    if (typeof effort !== 'string' || effort === '') return c.json(fail(40001, 'effort required'))
+    try {
+      await deps.registry.applyFlagSettings(c.req.param('id'), { effortLevel: effort })
+      return c.json(ok({}))
+    } catch (err) {
+      return c.json(controlFail(err))
+    }
+  })
+
   app.get('/api/v1/sessions/:id/models', async (c) => {
     if (deps.registry === undefined) return c.json(fail(50001, 'registry not configured'))
     try {
