@@ -55,7 +55,7 @@ export function Composer({
           value={text}
           disabled={disabled}
           placeholder={disabled ? '先选择一个会话' : '发消息… (Enter 发送，Shift+Enter 换行)'}
-          className="max-h-40 px-4 pt-3 pb-1"
+          className="max-h-40 min-h-[52px] px-4 pt-3 pb-1"
           onChange={(e) => {
             setText(e.target.value)
             e.target.style.height = 'auto'

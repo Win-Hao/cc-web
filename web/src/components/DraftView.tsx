@@ -34,7 +34,7 @@ interface Props {
 }
 
 const menuRow =
-  'flex w-full cursor-pointer items-center gap-2 rounded-md px-2.5 py-2 text-left hover:bg-sidebar-accent'
+  'flex w-full cursor-pointer items-center gap-2 rounded-md px-2.5 py-2 text-left outline-none hover:bg-sidebar-accent focus-visible:bg-sidebar-accent'
 
 export function DraftView({ projects, defaultCwd, onSend }: Props) {
   const [cwd, setCwd] = useState<string | null>(defaultCwd ?? projects[0]?.cwd ?? null)
@@ -99,7 +99,7 @@ export function DraftView({ projects, defaultCwd, onSend }: Props) {
             autoFocus
             value={text}
             placeholder="输入消息…"
-            className="max-h-52 min-h-[72px] py-3.5 pr-[56px] pl-4"
+            className="max-h-64 min-h-[110px] py-3.5 pr-[56px] pl-4"
             onChange={(e) => {
               setText(e.target.value)
               e.target.style.height = 'auto'
@@ -143,8 +143,9 @@ export function DraftView({ projects, defaultCwd, onSend }: Props) {
                   <div className="px-2.5 pt-1.5 pb-0.5 text-xs text-faint select-none">最近的文件夹</div>
                   <div className="max-h-72 overflow-y-auto">
                     {projects.map((p) => (
-                      <div
+                      <button
                         key={p.cwd}
+                        type="button"
                         className={cn(menuRow, p.cwd === cwd && 'bg-selected hover:bg-selected')}
                         onClick={() => pick(p.cwd)}
                       >
@@ -154,11 +155,12 @@ export function DraftView({ projects, defaultCwd, onSend }: Props) {
                           <span className="truncate text-xs text-faint">{abbrev(p.cwd)}</span>
                         </span>
                         {p.cwd === cwd && <Check className="size-3.5 shrink-0" />}
-                      </div>
+                      </button>
                     ))}
                   </div>
                   <Separator className="my-1" />
-                  <div
+                  <button
+                    type="button"
                     className={menuRow}
                     onClick={() => {
                       setBrowse(true)
@@ -167,7 +169,7 @@ export function DraftView({ projects, defaultCwd, onSend }: Props) {
                   >
                     <FolderSearch className="size-[15px] shrink-0 text-muted-foreground" />
                     <span className="text-[13px]">选择文件夹…</span>
-                  </div>
+                  </button>
                 </>
               )}
               {browse && (
@@ -185,22 +187,24 @@ export function DraftView({ projects, defaultCwd, onSend }: Props) {
                     <div className="px-2.5 py-1 text-xs text-destructive">{browseErr}</div>
                   )}
                   <div className="max-h-56 overflow-y-auto">
-                    <div
+                    <button
+                      type="button"
                       className={menuRow}
                       onClick={() => loadDirs(browsePath.replace(/\/[^/]+\/?$/, '') || '/')}
                     >
                       <ChevronLeft className="size-[15px] shrink-0 text-muted-foreground" />
                       <span className="text-[13px]">上一级</span>
-                    </div>
+                    </button>
                     {browseDirs.map((d) => (
-                      <div
+                      <button
                         key={d}
+                        type="button"
                         className={menuRow}
                         onClick={() => loadDirs(`${browsePath.replace(/\/$/, '')}/${d}`)}
                       >
                         <Folder className="size-[15px] shrink-0 text-muted-foreground" />
                         <span className="truncate text-[13px]">{d}</span>
-                      </div>
+                      </button>
                     ))}
                     {browseDirs.length === 0 && browseErr === null && (
                       <div className="px-2.5 py-2 text-xs text-faint">没有子目录</div>

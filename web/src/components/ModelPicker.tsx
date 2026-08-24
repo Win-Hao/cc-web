@@ -56,10 +56,11 @@ export function ModelPicker({ models, modelValue, modelResolved, effort, onModel
           {models.map((m) => {
             const on = current?.value === m.value
             return (
-              <div
+              <button
                 key={m.value}
+                type="button"
                 className={cn(
-                  'flex cursor-pointer items-center gap-2 rounded-md px-2.5 py-2 hover:bg-sidebar-accent',
+                  'flex w-full cursor-pointer items-center gap-2 rounded-md px-2.5 py-2 text-left outline-none hover:bg-sidebar-accent focus-visible:bg-sidebar-accent',
                   on && 'bg-selected hover:bg-selected',
                 )}
                 onClick={() => {
@@ -74,7 +75,7 @@ export function ModelPicker({ models, modelValue, modelResolved, effort, onModel
                   )}
                 </span>
                 {on && <Check className="size-3.5 shrink-0" />}
-              </div>
+              </button>
             )
           })}
         </div>
