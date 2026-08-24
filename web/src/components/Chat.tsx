@@ -768,10 +768,8 @@ export function Chat({
       return (
         <div
           className={cn(
-            'absolute top-1/2 left-[min(calc(50%+396px),calc(100%-20px))] z-10 flex max-h-[72%] -translate-y-1/2 flex-col transition-all duration-150',
-            railOpen
-              ? 'w-[272px] -translate-x-[calc(100%-16px)] gap-px overflow-y-auto rounded-xl border bg-background/95 p-1.5 shadow-xl backdrop-blur'
-              : 'items-center gap-[5px] overflow-hidden',
+            'absolute top-1/2 left-[min(calc(50%+396px),calc(100%-20px))] z-10 flex max-h-[72%] -translate-y-1/2 flex-col items-start transition-all duration-200',
+            railOpen ? 'gap-[3px] overflow-y-auto' : 'gap-[5px] overflow-hidden',
           )}
           onMouseEnter={() => setRailOpen(true)}
           onMouseLeave={() => setRailOpen(false)}
@@ -780,12 +778,8 @@ export function Chat({
             const active = m.key === activeAnchor
             return (
               <button
-                className={cn(
-                  'flex shrink-0 cursor-pointer items-center transition-all duration-150',
-                  railOpen ? 'w-full gap-2 rounded-md px-1.5 py-[3px] text-left hover:bg-secondary/70' : '',
-                )}
+                className="flex shrink-0 cursor-pointer items-center gap-2"
                 key={m.key}
-                title={railOpen ? undefined : textOfSegments(m.segments).slice(0, 48)}
                 onClick={() => jumpToAnchor(m.key)}
               >
                 <span
@@ -793,14 +787,18 @@ export function Chat({
                     'shrink-0 rounded-full transition-all duration-200',
                     railOpen
                       ? cn('h-3.5 w-[3px]', active ? 'bg-primary' : 'bg-border')
-                      : cn('h-[3px]', active ? 'w-4 bg-primary' : 'w-3 bg-border hover:bg-muted-foreground'),
+                      : cn('h-[3px]', active ? 'w-4 bg-primary' : 'w-3 bg-border'),
                   )}
                 />
-                {railOpen && (
-                  <span className={cn('min-w-0 flex-1 truncate text-xs', active ? 'text-primary' : 'text-muted-foreground')}>
-                    {textOfSegments(m.segments).replace(/\s+/g, ' ').slice(0, 60)}
-                  </span>
-                )}
+                <span
+                  className={cn(
+                    'overflow-hidden text-xs text-ellipsis whitespace-nowrap transition-all duration-200',
+                    railOpen ? 'max-w-[240px] opacity-100' : 'max-w-0 opacity-0',
+                    active ? 'text-primary' : 'text-muted-foreground hover:text-foreground',
+                  )}
+                >
+                  {textOfSegments(m.segments).replace(/\s+/g, ' ').slice(0, 60)}
+                </span>
               </button>
             )
           })}
