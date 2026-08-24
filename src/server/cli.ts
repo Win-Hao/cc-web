@@ -8,6 +8,8 @@
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { Engine } from '#/engine/engine.js'
+import { probeClaudeCapabilities } from '#/engine/capabilities.js'
+import type { ClaudeCapabilities } from '#/engine/capabilities.js'
 import { findSessionFile, readSessionCwd } from '#/sessions/find.js'
 import type { BootstrapDeps, BootResult } from './bootstrap.js'
 import type { EngineFactory } from './registry.js'
@@ -86,20 +88,31 @@ export async function run(argv: string[], deps: CliDeps): Promise<CliResult> {
   return { url, close: boot.close }
 }
 
-const STREAM_ARGS = [
-  '-p',
-  '--verbose',
-  '--input-format',
-  'stream-json',
-  '--output-format',
-  'stream-json',
-  '--include-partial-messages',
-  // 把 bypassPermissions 变成「可切换的选项」而不是默认行为（2.1.241 实测）：
-  // 不带它，set_permission_mode bypassPermissions 会被 CC 拒绝 ——
-  // 「session was not launched with --dangerously-skip-permissions」。
-  // 权限模式本身仍从 default 起步，切换由 UI 的下拉框显式触发。
-  '--allow-dangerously-skip-permissions',
-]
+/**
+ * 按探测到的能力组装引擎参数（M39）：老版本 CLI 没有的 flag 不传，
+ * 避免 "unknown option" exit 1 杀死会话。
+ * - --include-partial-messages：没有则退化为无打字机效果
+ * - --allow-dangerously-skip-permissions：把 bypass 变成可切换选项
+ *   （2.1.241 实测；没有则 UI 切 bypass 会被引擎拒绝并回滚，功能不损）
+ * - --session-id：新建会话必需，没有就明确报错
+ */
+export function buildEngineArgs(
+  caps: ClaudeCapabilities,
+  opts: { resume?: string; newSessionId?: string },
+): string[] {
+  const args = ['-p', '--verbose', '--input-format', 'stream-json', '--output-format', 'stream-json']
+  if (caps.partialMessages) args.push('--include-partial-messages')
+  if (caps.allowDangerousSkip) args.push('--allow-dangerously-skip-permissions')
+  if (opts.newSessionId !== undefined) {
+    if (!caps.sessionId) {
+      throw new Error('claude CLI is too old for new sessions (missing --session-id); please upgrade')
+    }
+    args.push('--session-id', opts.newSessionId)
+  } else if (opts.resume !== undefined) {
+    args.push('--resume', opts.resume)
+  }
+  return args
+}
 
 /**
  * 默认引擎工厂：真实 claude。
@@ -109,10 +122,11 @@ const STREAM_ARGS = [
  */
 function defaultFactory(projectsRoot: string): EngineFactory {
   return async (sessionId, opts) => {
+    const caps = await probeClaudeCapabilities('claude') // 进程内只探测一次
     if (opts?.newSessionCwd !== undefined) {
       return new Engine({
         bin: 'claude',
-        args: [...STREAM_ARGS, '--session-id', sessionId],
+        args: buildEngineArgs(caps, { newSessionId: sessionId }),
         cwd: opts.newSessionCwd,
       })
     }
@@ -120,7 +134,7 @@ function defaultFactory(projectsRoot: string): EngineFactory {
     const cwd = file !== null ? await readSessionCwd(file) : null
     return new Engine({
       bin: 'claude',
-      args: [...STREAM_ARGS, '--resume', sessionId],
+      args: buildEngineArgs(caps, { resume: sessionId }),
       ...(cwd !== null ? { cwd } : {}),
     })
   }
