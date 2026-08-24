@@ -101,6 +101,12 @@ effort  session_id  userType  entrypoint  cwd  sessionId  version  gitBranch
 每行还带 `cwd`：**resume 时引擎 spawn 的 `cwd` 必须设成它**，
 否则 CLAUDE.md、相对路径、git 上下文全错。新建会话则是用户指定的目录。
 
+**set_permission_mode 的 bypass 门槛**（M19 实测，基线 2.1.241）：
+运行时切到 `bypassPermissions` 要求进程启动时带
+`--allow-dangerously-skip-permissions`（把 bypass 变成可选项，默认行为
+不变）；不带则对端回 error「session was not launched with
+--dangerously-skip-permissions」。引擎默认带上（cli.ts STREAM_ARGS）。
+
 ## 3. 控制协议 ✅（类型）❓（运行时）
 
 `SDKControlRequest` 的 envelope：

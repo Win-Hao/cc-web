@@ -58,11 +58,19 @@ export default function App() {
     return key
   }, [])
 
-  const appendError = useCallback(
-    (text: string) =>
-      appendMsg({ role: 'error', segments: [{ kind: 'text', text: `⚠ ${text}` }], meta: null, sidechain: null }),
-    [appendMsg],
-  )
+  const appendError = useCallback((text: string) => {
+    // 同一个失败常从两条路各报一次（信封错误 + 引擎 error 帧）→ 连续同文去重
+    setMsgs((prev) => {
+      const last = prev[prev.length - 1]
+      const full = `⚠ ${text}`
+      if (last !== undefined && last.role === 'error' && textOfSegments(last.segments) === full) {
+        return prev
+      }
+      return [...prev, {
+        key: nextKey(), role: 'error', segments: [{ kind: 'text', text: full }], meta: null, sidechain: null,
+      }]
+    })
+  }, [])
 
   /** tool_result 回填：改对应工具段的状态和输出 */
   const patchToolResults = useCallback((results: ToolResultInfo[]) => {
@@ -472,10 +480,15 @@ export default function App() {
             disabled={sessionId === null}
             value={permMode}
             onChange={(e) => {
-              setPermMode(e.target.value)
+              const prev = permMode
+              const next = e.target.value
+              setPermMode(next)
               if (sessionId !== null) {
-                post(`/api/v1/sessions/${sessionId}/permission-mode`, { mode: e.target.value }).catch(
-                  (err: Error) => appendError(err.message),
+                post(`/api/v1/sessions/${sessionId}/permission-mode`, { mode: next }).catch(
+                  (err: Error) => {
+                    setPermMode(prev) // 切换被拒（或引擎没起来）→ 下拉框回滚，不留假状态
+                    appendError(err.message)
+                  },
                 )
               }
             }}

@@ -94,6 +94,11 @@ const STREAM_ARGS = [
   '--output-format',
   'stream-json',
   '--include-partial-messages',
+  // 把 bypassPermissions 变成「可切换的选项」而不是默认行为（2.1.241 实测）：
+  // 不带它，set_permission_mode bypassPermissions 会被 CC 拒绝 ——
+  // 「session was not launched with --dangerously-skip-permissions」。
+  // 权限模式本身仍从 default 起步，切换由 UI 的下拉框显式触发。
+  '--allow-dangerously-skip-permissions',
 ]
 
 /**
