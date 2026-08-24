@@ -82,6 +82,15 @@ effort  session_id  userType  entrypoint  cwd  sessionId  version  gitBranch
 注意 `parentUuid` 构成消息树，`isSidechain: true` 是 subagent 的消息——
 渲染时要分开，否则 Task 跑起来时主线会混进一堆看不懂的对话。
 
+**bookkeeping 行也在消息树里**（M51 实测，2026-08）：`attachment` /
+`ai-title` / `last-prompt` / `queue-operation` / `file-history-snapshot` /
+`system` 等行**同样带 uuid + parentUuid**，且 `attachment` 常是链上的
+中继（user → attachment → assistant）。两个后果：
+1. 主线还原不能「从根向下贪心选最新孩子」——晚写入、挂在老消息下、
+   自己没有孩子的 ai-title 行会把走链引进死胡同（实测 2966 行只剩 13 行）。
+   必须从最新的 user/assistant 叶子**向上**走；
+2. 中继行要走链但不渲染，主线输出只留 user/assistant。
+
 **subagent 的两种落盘格式**（M17 实测，基线 2.1.241）：
 
 - 旧格式：subagent 行混在主 jsonl 里（`isSidechain: true`，沿 `parentUuid`
