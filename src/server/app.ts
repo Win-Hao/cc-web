@@ -211,7 +211,12 @@ export function createApp(deps: AppDeps) {
 
   app.get('/api/v1/sessions', async (c) => {
     const sessions = await listSessions(deps.projectsRoot)
-    return c.json(ok({ sessions }))
+    // M54：带上每个会话的运行状态 —— 侧栏能看到别的会话在跑
+    const withState = sessions.map((s) => ({
+      ...s,
+      state: deps.registry?.state(s.session_id) ?? 'idle',
+    }))
+    return c.json(ok({ sessions: withState }))
   })
 
   /**

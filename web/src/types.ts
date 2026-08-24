@@ -4,6 +4,8 @@ export interface SessionSummary {
   cwd: string | null
   first_message: string | null
   mtime_ms: number
+  /** 运行状态（M54 侧栏指示）；老服务器没有该字段 → undefined 当 idle */
+  state?: SessionState
 }
 
 export interface HistoryMessage {

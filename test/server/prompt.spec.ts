@@ -227,3 +227,32 @@ describe('POST /api/v1/sessions/:id/interrupt', () => {
     ).toHaveLength(0)
   })
 })
+
+describe('GET /api/v1/sessions 的 state 字段（M54 侧栏运行指示）', () => {
+  it('running 会话在列表里被标出，其它是 idle', async () => {
+    const { app, recPath } = await setupReal()
+    // setupReal 的 projectsRoot 是空 tmpdir —— 铺一个会话文件让列表能看见它
+    const dir = recPath.replace(/stdin\.ndjson$/, '')
+    const { mkdirSync, writeFileSync } = await import('node:fs')
+    const { join } = await import('node:path')
+    mkdirSync(join(dir, '-tmp-proj'), { recursive: true })
+    writeFileSync(
+      join(dir, '-tmp-proj', 's1.jsonl'),
+      JSON.stringify({ type: 'user', uuid: 'u1', parentUuid: null, cwd: '/tmp/proj', message: { role: 'user', content: 'hi' } }) + '\n',
+    )
+    const idle = await getJsonBody(app, '/api/v1/sessions')
+    expect(idle.sessions.find((s) => s.session_id === 's1')?.state).toBe('idle')
+    await postJson(app, '/api/v1/sessions/s1/prompt', { text: 'go' })
+    const busy = await getJsonBody(app, '/api/v1/sessions')
+    expect(busy.sessions.find((s) => s.session_id === 's1')?.state).toBe('running')
+  })
+})
+
+async function getJsonBody(
+  app: Hono,
+  path: string,
+): Promise<{ sessions: { session_id: string; state?: string }[] }> {
+  const res = await app.request(path)
+  const body = (await res.json()) as { data: { sessions: { session_id: string; state?: string }[] } }
+  return body.data
+}

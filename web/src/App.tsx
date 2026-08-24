@@ -57,6 +57,14 @@ export default function App() {
   /** 历史分页（M51）：还有更早 + 最早 cursor */
   const [historyMore, setHistoryMore] = useState<{ hasMore: boolean; before: number | null }>({ hasMore: false, before: null })
   const loadingOlderRef = useRef(false)
+  /**
+   * WS 事件游标（M54）。首连传 MAX 跳过全量回放 —— 历史来自 jsonl，
+   * 回放再灌一遍会和 loadHistory 竞态出重复；之后事件不断更新游标，
+   * 同会话断线重连用真实 seq 只补缺口（API.md 的断线补发这才算接完）。
+   */
+  const lastSeqRef = useRef<number>(Number.MAX_SAFE_INTEGER)
+  /** state 的同步镜像：loadHistory resolve 时判断会话是否在跑（M54） */
+  const stateRef = useRef<SessionState>('idle')
   const [state, setState] = useState<SessionState>('idle')
   const [approval, setApproval] = useState<Approval | null>(null)
   const [usage, setUsage] = useState('')
@@ -148,6 +156,11 @@ export default function App() {
     refreshSessions()
       .catch((e: Error) => appendError(e.message))
       .finally(() => setSessionsLoading(false))
+    // M54：轮询保活 —— 别的会话在跑/跑完，侧栏 spinner 8s 内跟上
+    const timer = setInterval(() => {
+      refreshSessions().catch(() => {})
+    }, 8000)
+    return () => clearInterval(timer)
   }, [refreshSessions, appendError])
 
   /** context 窗口用量（M30）：引擎活着才有，拿不到就不显示 */
@@ -321,14 +334,19 @@ export default function App() {
         }
       }
     }
-    // 历史里还停在 pending 的工具 = 那一轮被中断，result 永远不会来 ——
-    // 标成 canceled，渲染层不再转 spinner（M52）
-    for (const m of out) {
+    return out
+  }, [])
+
+  /** 残留 pending → canceled（M52）。只对「没在跑」的会话做（M54 修正：
+   *  切回正在跑的会话时，pending 工具的 result 还在路上，不能标死）。 */
+  const sweepPending = useCallback((msgs: ChatMsg[]): ChatMsg[] => {
+    if (stateRef.current === 'running' || stateRef.current === 'waiting-approval') return msgs
+    for (const m of msgs) {
       for (const sg of m.segments) {
         if (sg.kind === 'tool' && sg.status === 'pending') sg.status = 'canceled'
       }
     }
-    return out
+    return msgs
   }, [])
 
   const loadHistory = useCallback(async (id: string) => {
@@ -337,7 +355,7 @@ export default function App() {
         `/api/v1/sessions/${id}/history?limit=100`,
       )
       toolLocRef.current = new Map()
-      setMsgs(buildHistoryMsgs(d.messages))
+      setMsgs(sweepPending(buildHistoryMsgs(d.messages)))
       setHistoryMore({
         hasMore: d.has_more === true,
         before: d.messages[0]?.cursor ?? null,
@@ -346,7 +364,7 @@ export default function App() {
     } catch (e) {
       appendError((e as Error).message)
     }
-  }, [appendError, buildHistoryMsgs, loadSubagents])
+  }, [appendError, buildHistoryMsgs, sweepPending, loadSubagents])
 
   /** 「加载更早的消息」（M51）：before cursor 取上一页，前插 */
   const loadOlder = useCallback(async () => {
@@ -379,6 +397,8 @@ export default function App() {
     setStreamThinking('')
     setStreamTools([])
     setHistoryMore({ hasMore: false, before: null })
+    lastSeqRef.current = Number.MAX_SAFE_INTEGER
+    stateRef.current = 'idle'
     thinkingStartRef.current = null
     turnStartRef.current = null
     setTurnStart(null)
@@ -430,11 +450,14 @@ export default function App() {
 
     const onMessage = (ev: MessageEvent<string>) => {
       const e = JSON.parse(ev.data) as HubEvent
+      if (typeof e.seq === 'number') lastSeqRef.current = e.seq
       const data = e.data as Record<string, unknown>
       switch (e.event) {
         case 'state': {
           const next = data.state as SessionState
+          stateRef.current = next
           setState(next)
+          refreshSessions().catch(() => {}) // 本会话状态翻转 → 侧栏指示立即跟上
           if (next === 'running') {
             // 同一回合内 running↔waiting-approval 往返不重置起点
             if (turnStartRef.current === null) turnStartRef.current = Date.now()
@@ -625,7 +648,7 @@ export default function App() {
     const connect = () => {
       const proto = location.protocol === 'https:' ? 'wss' : 'ws'
       ws = new WebSocket(
-        `${proto}://${location.host}/api/v1/ws?session=${sessionId}`,
+        `${proto}://${location.host}/api/v1/ws?session=${sessionId}&since=${lastSeqRef.current}`,
         `cc-web.bearer.${token}`,
       )
       ws.onmessage = onMessage

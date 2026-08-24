@@ -4,7 +4,7 @@
  * 间距 → 会话标题正对组名。
  */
 import { useEffect, useMemo, useState } from 'react'
-import { ChevronDown, ChevronUp, Folder, MessageSquareText, Plus, Search } from 'lucide-react'
+import { ChevronDown, ChevronUp, Folder, LoaderCircle, MessageSquareText, Plus, Search } from 'lucide-react'
 import type { SearchHit, SessionSummary } from '../types'
 import { api } from '../lib/api'
 import { groupKey, groupName, relTime, sessionTitle } from '../lib/format'
@@ -159,6 +159,12 @@ export function Sidebar({ sessions, loading, activeId, onSelect, onNewSession }:
                   >
                     <span className="w-4 shrink-0" />
                     <span className="min-w-0 flex-1 truncate font-[450]">{sessionTitle(s)}</span>
+                    {s.state === 'running' && (
+                      <LoaderCircle className="cc-icon-spin size-3 shrink-0 text-primary" />
+                    )}
+                    {s.state === 'waiting-approval' && (
+                      <span className="size-2 shrink-0 animate-pulse rounded-full bg-primary" title="waiting approval" />
+                    )}
                     <span className="shrink-0 text-right text-xs text-faint tabular-nums">
                       {relTime(s.mtime_ms)}
                     </span>
