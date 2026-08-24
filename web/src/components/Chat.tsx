@@ -2,7 +2,7 @@
  * 对话流：白底阅读面，内容列居中 max-w-[760px]。
  * 用户消息 = 右对齐软 accent 气泡；助手消息 = 文本段 + 工具行交错。
  */
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ChatMsg, ImageRef, ToolSeg } from '../types'
 import { textOfSegments } from '../lib/segments'
 import { Markdown } from './Markdown'
@@ -21,12 +21,13 @@ function Thumb({ image }: { image: ImageRef }) {
 }
 
 /** 折叠的思考过程：默认收起，muted 弱化，不抢正文视线 */
-function ThinkingBlock({ text }: { text: string }) {
+function ThinkingBlock({ text, seconds }: { text: string; seconds?: number | undefined }) {
   return (
     <details className="group mt-2">
       <summary className="cursor-pointer list-none text-xs text-faint select-none hover:text-muted-foreground [&::-webkit-details-marker]:hidden">
         <span className="mr-1 inline-block transition-transform group-open:rotate-90">›</span>
         {t('thoughtProcess')}
+        {seconds !== undefined && <span className="text-faint"> · {seconds}s</span>}
       </summary>
       <div className="mt-1 border-l-2 border-border pl-3 text-[13px] leading-relaxed break-words whitespace-pre-wrap text-muted-foreground italic">
         {text}
@@ -88,21 +89,47 @@ function ToolRow({ seg }: { seg: ToolSeg }) {
   )
 }
 
+/** 实时思考行（M46）：折叠 + 每秒跳的计时，点开看流式思考文本 */
+function LiveThinking({ text, startTs }: { text: string; startTs: number | null }) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(timer)
+  }, [])
+  const secs = startTs !== null ? Math.max(1, Math.round((now - startTs) / 1000)) : null
+  return (
+    <details className="group">
+      <summary className="flex cursor-pointer list-none items-center gap-1.5 text-xs text-muted-foreground select-none [&::-webkit-details-marker]:hidden">
+        <span className="size-[7px] shrink-0 animate-pulse rounded-full bg-faint" />
+        {t('thinkingLive')}
+        {secs !== null && <span className="text-faint">· {secs}s</span>}
+        <span className="inline-block text-faint transition-transform group-open:rotate-90">›</span>
+      </summary>
+      <div className="mt-1.5 border-l-2 border-border pl-3 text-[13px] leading-relaxed break-words whitespace-pre-wrap text-muted-foreground italic">
+        {text}
+      </div>
+    </details>
+  )
+}
+
 interface Props {
   messages: ChatMsg[]
   streamText: string
   streamThinking: string
+  thinkingStart: number | null
+  /** 引擎在跑但没有任何可见流（工具执行间隙等）→ 底部「工作中…」 */
+  working: boolean
   sessionId: string
 }
 
-export function Chat({ messages, streamText, streamThinking, sessionId }: Props) {
+export function Chat({ messages, streamText, streamThinking, thinkingStart, working, sessionId }: Props) {
   useLang()
   const scrollRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     const el = scrollRef.current
     if (el !== null) el.scrollTop = el.scrollHeight
-  }, [messages, streamText, streamThinking])
+  }, [messages, streamText, streamThinking, working])
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto" ref={scrollRef}>
@@ -128,7 +155,7 @@ export function Chat({ messages, streamText, streamThinking, sessionId }: Props)
             <div className="mt-2.5 max-w-[94%] self-start" key={m.key}>
               {m.segments.map((seg, i) =>
                 seg.kind === 'thinking' ? (
-                  <ThinkingBlock key={i} text={seg.text} />
+                  <ThinkingBlock key={i} seconds={seg.seconds} text={seg.text} />
                 ) : seg.kind === 'image' ? (
                   <div className="mt-2" key={i}>
                     <Thumb image={seg.image} />
@@ -168,8 +195,8 @@ export function Chat({ messages, streamText, streamThinking, sessionId }: Props)
         {(streamText !== '' || streamThinking !== '') && (
           <div className="mt-2.5 max-w-[94%] self-start">
             {streamThinking !== '' && (
-              <div className="mb-2 border-l-2 border-border pl-3 text-[13px] leading-relaxed break-words whitespace-pre-wrap text-muted-foreground italic">
-                {streamThinking}
+              <div className="mb-2">
+                <LiveThinking startTs={thinkingStart} text={streamThinking} />
               </div>
             )}
             {streamText !== '' && (
@@ -177,6 +204,15 @@ export function Chat({ messages, streamText, streamThinking, sessionId }: Props)
                 <Markdown text={streamText} />
               </div>
             )}
+          </div>
+        )}
+        {working && (
+          <div className="mt-3 flex items-center gap-2 self-start text-[13px] text-muted-foreground">
+            <span className="relative flex size-2.5">
+              <span className="absolute inline-flex size-full animate-ping rounded-full bg-primary opacity-40" />
+              <span className="relative inline-flex size-2.5 rounded-full bg-primary/70" />
+            </span>
+            {t('working')}
           </div>
         )}
       </div>

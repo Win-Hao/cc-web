@@ -46,6 +46,8 @@ export interface TextSeg {
 export interface ThinkingSeg {
   kind: 'thinking'
   text: string
+  /** 本轮实时流计到的思考秒数（M46）；历史消息没有 → 不显示时长 */
+  seconds?: number
 }
 
 export interface ImageRef {

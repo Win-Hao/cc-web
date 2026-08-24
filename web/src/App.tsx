@@ -66,6 +66,9 @@ export default function App() {
   const lastCwdRef = useRef<string | null>(null)
   /** tool_use id → 它渲染在哪条消息的哪个段（tool_result 回填用） */
   const toolLocRef = useRef(new Map<string, { key: string; si: number }>())
+  /** 本轮 thinking 流的开始时刻（M46 等待态计秒）；finalize 时算时长 */
+  const thinkingStartRef = useRef<number | null>(null)
+  const [thinkingStart, setThinkingStart] = useState<number | null>(null)
 
   const appendMsg = useCallback((m: Omit<ChatMsg, 'key'>): string => {
     const key = nextKey()
@@ -316,6 +319,8 @@ export default function App() {
     setMsgs([])
     setStream('')
     setStreamThinking('')
+    thinkingStartRef.current = null
+    setThinkingStart(null)
     setApproval(null)
     setModelValue(null)
     setModelResolved(null)
@@ -374,6 +379,10 @@ export default function App() {
           if (evt?.type === 'content_block_delta' && evt.delta?.type === 'text_delta') {
             setStream((s) => s + (evt.delta?.text ?? ''))
           } else if (evt?.type === 'content_block_delta' && evt.delta?.type === 'thinking_delta') {
+            if (thinkingStartRef.current === null) {
+              thinkingStartRef.current = Date.now()
+              setThinkingStart(thinkingStartRef.current)
+            }
             setStreamThinking((s) => s + (evt.delta?.thinking ?? ''))
           }
           break
@@ -413,6 +422,13 @@ export default function App() {
             if (segments.length > 0) {
               setStream('')
               setStreamThinking('')
+              // 本轮实时思考的时长归到刚 finalize 的 thinking 段（M46）
+              if (thinkingStartRef.current !== null && segments.some((sg) => sg.kind === 'thinking')) {
+                const secs = Math.max(1, Math.round((Date.now() - thinkingStartRef.current) / 1000))
+                for (const sg of segments) if (sg.kind === 'thinking') sg.seconds = secs
+                thinkingStartRef.current = null
+                setThinkingStart(null)
+              }
               const key = nextKey()
               segments.forEach((seg, si) => {
                 if (seg.kind === 'tool' && seg.id !== null) toolLocRef.current.set(seg.id, { key, si })
@@ -449,6 +465,8 @@ export default function App() {
           } else if (data.type === 'result') {
             setStream('')
             setStreamThinking('')
+            thinkingStartRef.current = null
+            setThinkingStart(null)
             void loadUsage(sessionId)
             void loadContext(sessionId) // context 环跟着每轮更新
             void loadSubagents(sessionId) // 本轮新 spawn 的 subagent 落盘了，补锚点
@@ -713,7 +731,14 @@ export default function App() {
           />
         ) : (
           <>
-            <Chat messages={msgs} streamText={stream} streamThinking={streamThinking} sessionId={sessionId} />
+            <Chat
+              messages={msgs}
+              streamText={stream}
+              streamThinking={streamThinking}
+              thinkingStart={thinkingStart}
+              working={state === 'running' && stream === '' && streamThinking === ''}
+              sessionId={sessionId}
+            />
             <Composer
               disabled={false}
               running={state !== 'idle'}
