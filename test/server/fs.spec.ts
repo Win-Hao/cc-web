@@ -24,12 +24,12 @@ async function getJson(app: Hono, path: string) {
 }
 
 describe('GET /api/v1/fs/dirs', () => {
-  it('列出子目录（排序、不含隐藏目录和文件）', async () => {
+  it('列出子目录（普通在前、隐藏在后、不含文件）', async () => {
     const app = createApp({ projectsRoot: root })
     const { code, data } = await getJson(app, `/api/v1/fs/dirs?path=${encodeURIComponent(root)}`)
     expect(code).toBe(0)
     expect(data.path).toBe(root)
-    expect(data.dirs).toEqual(['proj-a', 'proj-b'])
+    expect(data.dirs).toEqual(['proj-a', 'proj-b', '.hidden'])
   })
 
   it('读不了的路径 / 相对路径 → 信封错误码', async () => {

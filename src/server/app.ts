@@ -98,11 +98,12 @@ export function createApp(deps: AppDeps) {
     if (!path.startsWith('/')) return c.json(fail(40006, 'path must be absolute or ~'))
     try {
       const entries = await readdir(path, { withFileTypes: true })
-      const dirs = entries
-        .filter((e) => e.isDirectory() && !e.name.startsWith('.'))
-        .map((e) => e.name)
-        .sort((a, b) => a.localeCompare(b))
-        .slice(0, 300)
+      const names = entries.filter((e) => e.isDirectory()).map((e) => e.name)
+      // 普通目录在前、隐藏目录在后（.claude 这类也要能选到）
+      const dirs = [
+        ...names.filter((n) => !n.startsWith('.')).sort((a, b) => a.localeCompare(b)),
+        ...names.filter((n) => n.startsWith('.')).sort((a, b) => a.localeCompare(b)),
+      ].slice(0, 500)
       return c.json(ok({ path, dirs }))
     } catch {
       return c.json(fail(40005, `cannot read directory: ${path}`))

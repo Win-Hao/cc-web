@@ -4,11 +4,10 @@
  * 服务端目录浏览器。会话在发出首条消息时才创建。
  */
 import { useEffect, useRef, useState } from 'react'
-import { ArrowUp, Check, ChevronDown, ChevronLeft, ChevronUp, Folder, FolderSearch } from 'lucide-react'
+import { ArrowUp, Check, ChevronDown, ChevronUp, Folder, FolderSearch } from 'lucide-react'
 import { api } from '../lib/api'
 import type { ProjectChoice } from '../types'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -16,6 +15,7 @@ import {
 import { Separator } from '@/components/ui/separator'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
+import { FolderDialog } from './FolderDialog'
 import { ModelPicker } from './ModelPicker'
 import type { ModelOption } from '../types'
 
@@ -57,10 +57,7 @@ export function DraftView({
 }: Props) {
   const [cwd, setCwd] = useState<string | null>(defaultCwd ?? projects[0]?.cwd ?? null)
   const [menuOpen, setMenuOpen] = useState(false)
-  const [browse, setBrowse] = useState(false)
-  const [browsePath, setBrowsePath] = useState('~')
-  const [browseDirs, setBrowseDirs] = useState<string[]>([])
-  const [browseErr, setBrowseErr] = useState<string | null>(null)
+  const [folderDialog, setFolderDialog] = useState(false)
   const [home, setHome] = useState<string | null>(null)
   const [text, setText] = useState('')
   const taRef = useRef<HTMLTextAreaElement>(null)
@@ -77,20 +74,10 @@ export function DraftView({
   const abbrev = (p: string): string =>
     home !== null && p.startsWith(home) ? `~${p.slice(home.length)}` : p
 
-  const loadDirs = (path: string) => {
-    setBrowseErr(null)
-    api<{ path: string; dirs: string[] }>(`/api/v1/fs/dirs?path=${encodeURIComponent(path)}`)
-      .then((d) => {
-        setBrowsePath(d.path)
-        setBrowseDirs(d.dirs)
-      })
-      .catch((e: Error) => setBrowseErr(e.message))
-  }
-
   const pick = (path: string) => {
     setCwd(path)
     setMenuOpen(false)
-    setBrowse(false)
+    setFolderDialog(false)
     taRef.current?.focus()
   }
 
@@ -164,10 +151,7 @@ export function DraftView({
         <div className="mt-2 flex">
           <Popover
             open={menuOpen}
-            onOpenChange={(o) => {
-              setMenuOpen(o)
-              if (!o) setBrowse(false)
-            }}
+            onOpenChange={setMenuOpen}
           >
             <PopoverTrigger asChild>
               <Button variant="ghost" size="sm" className="gap-1.5 text-muted-foreground hover:text-foreground">
@@ -177,9 +161,7 @@ export function DraftView({
               </Button>
             </PopoverTrigger>
             <PopoverContent side="top" className="w-[380px]">
-              {!browse && (
-                <>
-                  <div className="px-2.5 pt-1.5 pb-0.5 text-xs text-faint select-none">最近的文件夹</div>
+              <div className="px-2.5 pt-1.5 pb-0.5 text-xs text-faint select-none">最近的文件夹</div>
                   <div className="max-h-72 overflow-y-auto">
                     {projects.map((p) => (
                       <button
@@ -197,70 +179,29 @@ export function DraftView({
                       </button>
                     ))}
                   </div>
-                  <Separator className="my-1" />
-                  <button
-                    type="button"
-                    className={menuRow}
-                    onClick={() => {
-                      setBrowse(true)
-                      loadDirs(cwd ?? '~')
-                    }}
-                  >
-                    <FolderSearch className="size-[15px] shrink-0 text-muted-foreground" />
-                    <span className="text-[13px]">选择文件夹…</span>
-                  </button>
-                </>
-              )}
-              {browse && (
-                <>
-                  <Input
-                    value={browsePath}
-                    onChange={(e) => setBrowsePath(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && !e.nativeEvent.isComposing) loadDirs(browsePath)
-                    }}
-                    spellCheck={false}
-                    className="m-1 w-[calc(100%-8px)] font-mono text-xs"
-                  />
-                  {browseErr !== null && (
-                    <div className="px-2.5 py-1 text-xs text-destructive">{browseErr}</div>
-                  )}
-                  <div className="max-h-56 overflow-y-auto">
-                    <button
-                      type="button"
-                      className={menuRow}
-                      onClick={() => loadDirs(browsePath.replace(/\/[^/]+\/?$/, '') || '/')}
-                    >
-                      <ChevronLeft className="size-[15px] shrink-0 text-muted-foreground" />
-                      <span className="text-[13px]">上一级</span>
-                    </button>
-                    {browseDirs.map((d) => (
-                      <button
-                        key={d}
-                        type="button"
-                        className={menuRow}
-                        onClick={() => loadDirs(`${browsePath.replace(/\/$/, '')}/${d}`)}
-                      >
-                        <Folder className="size-[15px] shrink-0 text-muted-foreground" />
-                        <span className="truncate text-[13px]">{d}</span>
-                      </button>
-                    ))}
-                    {browseDirs.length === 0 && browseErr === null && (
-                      <div className="px-2.5 py-2 text-xs text-faint">没有子目录</div>
-                    )}
-                  </div>
-                  <div className="flex justify-end gap-2 border-t p-1.5">
-                    <Button variant="outline" size="sm" onClick={() => setBrowse(false)}>返回</Button>
-                    <Button size="sm" className="max-w-[240px]" onClick={() => pick(browsePath)}>
-                      <span className="truncate">选用 {abbrev(browsePath)}</span>
-                    </Button>
-                  </div>
-                </>
-              )}
+              <Separator className="my-1" />
+              <button
+                type="button"
+                className={menuRow}
+                onClick={() => {
+                  setMenuOpen(false)
+                  setFolderDialog(true)
+                }}
+              >
+                <FolderSearch className="size-[15px] shrink-0 text-muted-foreground" />
+                <span className="text-[13px]">选择文件夹…</span>
+              </button>
             </PopoverContent>
           </Popover>
         </div>
       </div>
+      {folderDialog && (
+        <FolderDialog
+          initialPath={cwd ?? home ?? '/'}
+          onCancel={() => setFolderDialog(false)}
+          onPick={pick}
+        />
+      )}
     </div>
   )
 }
