@@ -16,6 +16,7 @@
  *             专门钉 UTF-8 跨 chunk 解码（引擎必须 setEncoding）
  *   --delay   每帧之间的间隔毫秒，模拟流式
  *   --exit    吐完之后用这个码退出，默认 0；非 0 用来测「引擎崩了」
+ *   --stderr <text>  启动时往 stderr 写这段文字 —— 测死亡诊断（M40）
  *   --hold    吐完之后不退出，挂着直到被杀 —— 测 stop()/退出钩子用
  *   --echo-result  每收到一行 stdin 就回一帧 {"type":"result","subtype":"success"}
  *             —— 模拟「每轮对话以 result 收尾」，测状态机/刷新逻辑用
@@ -41,6 +42,8 @@ const split = has('split')
 const splitBytes = has('split-bytes')
 const delay = Number(arg('delay', '0'))
 const exitCode = Number(arg('exit', '0'))
+const stderrText = arg('stderr')
+if (stderrText !== undefined) process.stderr.write(stderrText + '\n')
 const hold = has('hold')
 const spawnSleeper = has('spawn-sleeper')
 const echoResult = has('echo-result')

@@ -61,6 +61,15 @@ describe('Engine 生命周期', () => {
     expect(err.message).toContain('3')
   })
 
+  it('意外死亡的错误信息带 stderr 尾巴（死因诊断，M40）', async () => {
+    const engine = makeEngine(['--exit', '2', '--stderr', 'Invalid API key · Please run /login'])
+    const errPromise = new Promise<Error>((r) => engine.on('error', r))
+    await engine.start()
+    const err = await errPromise
+    expect(err.message).toContain('Invalid API key')
+    expect(engine.stderrTail).toContain('/login')
+  })
+
   it('正常退出（exit 0）不 emit error，且没人听 error 也不崩服务器', async () => {
     const engine = makeEngine()
     const onError = vi.fn()

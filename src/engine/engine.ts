@@ -38,6 +38,8 @@ export class Engine extends EventEmitter {
   private readonly opts: EngineOptions
   /** 最近一次 error（兜底 listener 存，见类注释） */
   lastError: Error | null = null
+  /** stderr 尾部环形缓冲（M40）：意外死亡时拼进错误信息，排障用 */
+  private stderrBuf = ''
 
   constructor(opts: EngineOptions) {
     super()
@@ -54,6 +56,11 @@ export class Engine extends EventEmitter {
 
   get pid(): number | null {
     return this.child?.pid ?? null
+  }
+
+  /** stderr 尾部（最多 4KB），诊断用 */
+  get stderrTail(): string {
+    return this.stderrBuf
   }
 
   /** spawn 成功（'spawn' 事件）后 resolve；spawn 失败 reject 且 emit error。 */
@@ -85,15 +92,23 @@ export class Engine extends EventEmitter {
       // 字符 —— 逐 chunk 各自 toString 会把劈开的汉字解码成替换符（乱码）
       child.stdout!.setEncoding('utf8')
       child.stdout!.on('data', (c: string) => this.parser.push(c))
-      // stderr 先吃掉：不读会把管道写满阻塞子进程。先不接事件，M3+ 需要再加。
-      child.stderr!.on('data', () => {})
+      // stderr 必须读掉（不读会把管道写满阻塞子进程），同时留尾部 4KB：
+      // 引擎意外死亡时 code=1 本身毫无信息量，stderr 尾巴才是死因（M40）
+      child.stderr!.setEncoding('utf8')
+      child.stderr!.on('data', (c: string) => {
+        this.stderrBuf = (this.stderrBuf + c).slice(-4096)
+      })
 
       child.on('close', (code, signal) => {
         unregisterForCleanup(this)
         this.parser.end()
         if (!this.stopping && code !== 0) {
+          const tail = this.stderrBuf.trim().slice(-500)
           this.emitError(
-            new Error(`engine exited unexpectedly: code=${code} signal=${signal}`),
+            new Error(
+              `engine exited unexpectedly: code=${code} signal=${signal}` +
+                (tail !== '' ? `\nstderr: ${tail}` : ''),
+            ),
           )
         }
         this.emit('exit', code, signal)
