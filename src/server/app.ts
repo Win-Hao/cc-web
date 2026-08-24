@@ -110,6 +110,42 @@ export function createApp(deps: AppDeps) {
     }
   })
 
+  /**
+   * M29：账户级模型/设置元数据。不借任何真实会话（--resume 大会话要先
+   * 加载整个转写，冷启动会超握手超时）——起一次性空白引擎（--session-id
+   * 新会话，无转写秒起），拉完 list_models + get_settings 就停掉，结果
+   * 进程内缓存。不发消息就不会落盘 jsonl，不留垃圾会话。
+   */
+  let metaCache: { models: unknown; settings: unknown } | null = null
+  let metaInflight: Promise<{ models: unknown; settings: unknown }> | null = null
+
+  async function fetchMeta(registry: SessionRegistry): Promise<{ models: unknown; settings: unknown }> {
+    const id = await registry.create(homedir())
+    try {
+      const modelsPayload = (await registry.listModels(id)) as { models?: unknown } | null
+      const settings = await registry.getSettings(id).catch(() => null)
+      return { models: modelsPayload?.models ?? [], settings }
+    } finally {
+      void registry.get(id)?.stop()
+    }
+  }
+
+  app.get('/api/v1/models', async (c) => {
+    if (deps.registry === undefined) return c.json(fail(50001, 'registry not configured'))
+    if (metaCache !== null) return c.json(ok(metaCache))
+    try {
+      if (metaInflight === null) {
+        metaInflight = fetchMeta(deps.registry).finally(() => {
+          metaInflight = null
+        })
+      }
+      metaCache = await metaInflight
+      return c.json(ok(metaCache))
+    } catch (err) {
+      return c.json(controlFail(err))
+    }
+  })
+
   app.get('/api/v1/sessions', async (c) => {
     const sessions = await listSessions(deps.projectsRoot)
     return c.json(ok({ sessions }))

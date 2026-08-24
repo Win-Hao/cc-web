@@ -149,8 +149,12 @@ export default function App() {
     }
   }, [])
 
-  /* ── 模型列表：账户级，只拉一次（每个会话拉会各 spawn 一个引擎）── */
-  const loadModels = useCallback(async (id: string) => {
+  /**
+   * 模型列表 + 默认 effort：账户级 /api/v1/models（M29）。
+   * 服务端用一次性空白引擎拉（不借真实会话 —— resume 大会话冷启动
+   * 会超握手超时，这正是「首次要点击才加载」的根因），结果缓存。
+   */
+  const loadModels = useCallback(async () => {
     if (modelsLoadedRef.current) return
     try {
       const d = await api<{
@@ -159,7 +163,8 @@ export default function App() {
           description?: string; resolvedModel?: string
           supportsEffort?: boolean; supportedEffortLevels?: string[]
         }[]
-      }>(`/api/v1/sessions/${id}/models`)
+        settings?: { applied?: { effort?: string | null; model?: string | null } } | null
+      }>('/api/v1/models')
       const opts: ModelOption[] = []
       for (const m of d.models ?? []) {
         const value = m.value ?? m.id
@@ -176,25 +181,22 @@ export default function App() {
       }
       setModels(opts)
       modelsLoadedRef.current = true
-      // 默认 effort / 当前模型来自 get_settings 的 applied 段（M27 实测）
-      try {
-        const st = await api<{ applied?: { effort?: string | null; model?: string | null } }>(
-          `/api/v1/sessions/${id}/settings`,
-        )
-        const effortDefault = st.applied?.effort
-        const modelDefault = st.applied?.model
-        if (typeof effortDefault === 'string') {
-          defaultEffortRef.current = effortDefault
-          setEffort((prev) => prev ?? effortDefault)
-        }
-        if (typeof modelDefault === 'string') setModelResolved((prev) => prev ?? modelDefault)
-      } catch {
-        // 拿不到默认值就等 init 帧 / 用户手选
+      const effortDefault = d.settings?.applied?.effort
+      const modelDefault = d.settings?.applied?.model
+      if (typeof effortDefault === 'string') {
+        defaultEffortRef.current = effortDefault
+        setEffort((prev) => prev ?? effortDefault)
       }
+      if (typeof modelDefault === 'string') setModelResolved((prev) => prev ?? modelDefault)
     } catch {
       setModels([])
     }
   }, [])
+
+  // 页面一挂载就拉（不等会话列表；服务端有缓存，重复调用无成本）
+  useEffect(() => {
+    void loadModels()
+  }, [loadModels])
 
   /** 新格式 subagent：按 meta.toolUseId 挂到对应工具段（M17） */
   const loadSubagents = useCallback(async (id: string) => {
@@ -227,18 +229,10 @@ export default function App() {
     }
   }, [])
 
-  // 草稿态（没选会话）也要模型列表：借最近一个会话的引擎拉（账户级只拉一次）
-  useEffect(() => {
-    if (sessionId !== null || sessions.length === 0 || modelsLoadedRef.current) return
-    void loadModels(sessions[0]!.session_id)
-  }, [sessionId, sessions, loadModels])
-
-  /** 面板打开时的兜底：首次加载失败（引擎冷启动超时等）→ 重拉 */
+  /** 面板打开时的兜底：首拉失败（网络/服务器重启）→ 重试 */
   const ensureModels = useCallback(() => {
-    if (modelsLoadedRef.current) return
-    const id = sessionId ?? sessions[0]?.session_id
-    if (id !== undefined) void loadModels(id)
-  }, [sessionId, sessions, loadModels])
+    if (!modelsLoadedRef.current) void loadModels()
+  }, [loadModels])
 
   const loadHistory = useCallback(async (id: string) => {
     try {
@@ -325,7 +319,7 @@ export default function App() {
       void loadHistory(sessionId)
     }
     void loadUsage(sessionId)
-    void loadModels(sessionId)
+    void loadModels()
 
     let closedByUs = false
     let dropped = false
