@@ -778,7 +778,7 @@ export function Chat({
             const active = m.key === activeAnchor
             return (
               <button
-                className="flex shrink-0 cursor-pointer items-center gap-2"
+                className="group/anchor flex shrink-0 cursor-pointer items-center gap-2"
                 key={m.key}
                 onClick={() => jumpToAnchor(m.key)}
               >
@@ -786,15 +786,15 @@ export function Chat({
                   className={cn(
                     'shrink-0 rounded-full transition-all duration-200',
                     railOpen
-                      ? cn('h-3.5 w-[3px]', active ? 'bg-primary' : 'bg-border')
-                      : cn('h-[3px]', active ? 'w-4 bg-primary' : 'w-3 bg-border'),
+                      ? cn('h-[18px] w-[3px]', active ? 'bg-primary' : 'bg-border group-hover/anchor:bg-primary/50')
+                      : cn('h-1', active ? 'w-4 bg-primary' : 'w-3 bg-border group-hover/anchor:bg-primary/50'),
                   )}
                 />
                 <span
                   className={cn(
-                    'overflow-hidden text-xs text-ellipsis whitespace-nowrap transition-all duration-200',
-                    railOpen ? 'max-w-[240px] opacity-100' : 'max-w-0 opacity-0',
-                    active ? 'text-primary' : 'text-muted-foreground hover:text-foreground',
+                    'overflow-hidden text-[13px] text-ellipsis whitespace-nowrap transition-all duration-200',
+                    railOpen ? 'max-w-[250px] opacity-100' : 'max-w-0 opacity-0',
+                    active ? 'text-primary' : 'text-muted-foreground group-hover/anchor:text-foreground',
                   )}
                 >
                   {textOfSegments(m.segments).replace(/\s+/g, ' ').slice(0, 60)}
