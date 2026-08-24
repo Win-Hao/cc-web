@@ -1,0 +1,210 @@
+/* ---------------------------------------------------------------------------
+   Tailwind v4 + shadcn/ui 主题。语义变量 + 亮暗双主题（media 策略，
+   不用 .dark class）；当前配色是临时占位，后续换成自己的视觉体系。
+   --------------------------------------------------------------------------- */
+@import "tailwindcss";
+@import "tw-animate-css";
+
+:root {
+  --radius: 0.5rem;
+  --background: #ffffff;
+  --foreground: rgba(0, 0, 0, 0.9);
+  --card: #ffffff;
+  --card-foreground: rgba(0, 0, 0, 0.9);
+  --popover: #ffffff;
+  --popover-foreground: rgba(0, 0, 0, 0.9);
+  --primary: #1783ff;
+  --primary-foreground: #ffffff;
+  --secondary: #f3f5f8;
+  --secondary-foreground: rgba(0, 0, 0, 0.9);
+  --muted: #f3f5f8;
+  --muted-foreground: #6b7280;
+  --accent: #e8f3ff;
+  --accent-foreground: #0f6fe0;
+  --destructive: #c0392b;
+  --destructive-foreground: #ffffff;
+  --border: #e7eaee;
+  --input: #d4d9e0;
+  --ring: #cfe6ff;
+  --sidebar: #fbfaf9;
+  --sidebar-foreground: rgba(0, 0, 0, 0.9);
+  --sidebar-accent: #0000000d;
+  --sidebar-accent-foreground: rgba(0, 0, 0, 0.9);
+  --sidebar-border: #e7eaee;
+  --sidebar-ring: #cfe6ff;
+  /* 补充语义（shadcn 标准集之外） */
+  --selected: #00000014;
+  --faint: #9aa3af;
+  --success: #0e7a38;
+  --warning: #a9610a;
+  --warning-soft: #fbf1e0;
+  --danger-soft: #fbeaea;
+  --accent-bd: #cfe6ff;
+  --sunken: #f3f5f8;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0d1117;
+    --foreground: #c9cdd4;
+    --card: #1c2128;
+    --card-foreground: #c9cdd4;
+    --popover: #1c2128;
+    --popover-foreground: #c9cdd4;
+    --primary: #58a6ff;
+    --primary-foreground: #0d1117;
+    --secondary: #161b22;
+    --secondary-foreground: #c9cdd4;
+    --muted: #161b22;
+    --muted-foreground: #9aa0a8;
+    --accent: rgba(88, 166, 255, 0.14);
+    --accent-foreground: #79b8ff;
+    --destructive: #f85149;
+    --destructive-foreground: #0d1117;
+    --border: #2d333b;
+    --input: #3d444d;
+    --ring: rgba(88, 166, 255, 0.28);
+    --sidebar: #181817;
+    --sidebar-foreground: #c9cdd4;
+    --sidebar-accent: #ffffff0d;
+    --sidebar-accent-foreground: #c9cdd4;
+    --sidebar-border: #2d333b;
+    --sidebar-ring: rgba(88, 166, 255, 0.28);
+    --selected: #ffffff14;
+    --faint: #6b7280;
+    --success: #3fb950;
+    --warning: #d29922;
+    --warning-soft: rgba(210, 153, 34, 0.14);
+    --danger-soft: rgba(248, 81, 73, 0.14);
+    --accent-bd: rgba(88, 166, 255, 0.28);
+    --sunken: #0d1117;
+  }
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-selected: var(--selected);
+  --color-faint: var(--faint);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-danger-soft: var(--danger-soft);
+  --color-accent-bd: var(--accent-bd);
+  --color-sunken: var(--sunken);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --font-sans: "Helvetica Neue", Arial, "PingFang SC", "Hiragino Sans GB",
+    "Microsoft YaHei", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html, body, #app {
+    height: 100%;
+    overflow: hidden;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-size: 14px;
+    line-height: 1.6;
+  }
+  :root { color-scheme: light dark; }
+  /* 细滚动条：透明轨道 + 半透明中性灰浮条 */
+  *::-webkit-scrollbar { width: 6px; height: 6px; }
+  *::-webkit-scrollbar-track { background: transparent; }
+  *::-webkit-scrollbar-thumb { background: rgba(128, 128, 128, 0.3); border-radius: 999px; }
+  *::-webkit-scrollbar-thumb:hover { background: rgba(128, 128, 128, 0.5); }
+}
+
+/* ── Markdown（助手文本段）：正文 UI sans，代码 mono ── */
+.md > :first-child { margin-top: 0; }
+.md > :last-child { margin-bottom: 0; }
+.md p { margin: 8px 0 0; }
+.md p:first-child { margin-top: 0; }
+.md h1, .md h2, .md h3, .md h4 { margin: 14px 0 6px; font-weight: 600; line-height: 1.25; }
+.md h1 { font-size: 18px; }
+.md h2 { font-size: 16px; }
+.md h3, .md h4 { font-size: 15px; }
+.md ul, .md ol { margin: 6px 0; padding-left: 22px; }
+.md ul { list-style: disc; }
+.md ol { list-style: decimal; }
+.md li { margin: 2px 0; }
+.md li > p { margin: 0; }
+.md blockquote { margin: 8px 0; padding: 2px 12px; border-left: 3px solid var(--input); color: var(--muted-foreground); }
+.md a { color: var(--primary); text-decoration: none; }
+.md a:hover { text-decoration: underline; }
+.md hr { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
+.md table { border-collapse: collapse; margin: 8px 0; font-size: 13px; display: block; overflow-x: auto; }
+.md th, .md td { border: 1px solid var(--border); padding: 5px 10px; text-align: left; }
+.md th { background: var(--sunken); font-weight: 500; }
+.md :not(pre) > code {
+  font: 0.9em var(--font-mono);
+  background: var(--sunken);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+.md pre {
+  margin: 8px 0;
+  padding: 10px 12px;
+  background: var(--sunken);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow-x: auto;
+  font: 12px/1.6 var(--font-mono);
+}
+.md pre code { background: none; border: none; padding: 0; font: inherit; }
+
+/* 高亮 token 色板：GitHub 风格，亮暗各一套 */
+.md .hljs-comment, .md .hljs-quote { color: #6a737d; }
+.md .hljs-keyword, .md .hljs-selector-tag, .md .hljs-type { color: #d73a49; }
+.md .hljs-string, .md .hljs-regexp, .md .hljs-addition { color: #032f62; }
+.md .hljs-number, .md .hljs-literal, .md .hljs-symbol { color: #005cc5; }
+.md .hljs-title, .md .hljs-function .hljs-title, .md .hljs-section { color: #6f42c1; }
+.md .hljs-attr, .md .hljs-attribute, .md .hljs-variable, .md .hljs-template-variable { color: #e36209; }
+.md .hljs-built_in, .md .hljs-builtin-name { color: #005cc5; }
+.md .hljs-name, .md .hljs-selector-id, .md .hljs-selector-class { color: #22863a; }
+.md .hljs-deletion { color: #b31d28; }
+.md .hljs-meta { color: #6a737d; }
+@media (prefers-color-scheme: dark) {
+  .md .hljs-comment, .md .hljs-quote { color: #8b949e; }
+  .md .hljs-keyword, .md .hljs-selector-tag, .md .hljs-type { color: #ff7b72; }
+  .md .hljs-string, .md .hljs-regexp, .md .hljs-addition { color: #a5d6ff; }
+  .md .hljs-number, .md .hljs-literal, .md .hljs-symbol { color: #79c0ff; }
+  .md .hljs-title, .md .hljs-function .hljs-title, .md .hljs-section { color: #d2a8ff; }
+  .md .hljs-attr, .md .hljs-attribute, .md .hljs-variable, .md .hljs-template-variable { color: #ffa657; }
+  .md .hljs-built_in, .md .hljs-builtin-name { color: #79c0ff; }
+  .md .hljs-name, .md .hljs-selector-id, .md .hljs-selector-class { color: #7ee787; }
+  .md .hljs-deletion { color: #ffa198; }
+  .md .hljs-meta { color: #8b949e; }
+}

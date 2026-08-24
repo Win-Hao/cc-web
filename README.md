@@ -34,8 +34,9 @@ pnpm test:contract # 契约测试，跑真实 claude，需要登录态
 
 前端开发热更流：`pnpm dev`（后端）+ `pnpm dev:web`（vite，代理 /api 到 58630），
 浏览器开 vite 地址并带上 `#token=<~/.cc-web/server.token 内容>`。
-前端样式体系移植自 同类项目 的 apps/参考实现（MIT）：React + Vite，无组件库，
-design token 见 web/src/styles/tokens.css。
+前端：React + Vite + Tailwind v4 + shadcn/ui（Radix 原语，组件 vendor 在
+web/src/components/ui/）；design token 见 web/src/styles/globals.css（shadcn
+语义变量，暗色跟随系统，配色后续会换成自己的视觉体系）。
 
 ## 交接：TUI ⇄ 浏览器
 

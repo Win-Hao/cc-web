@@ -1,12 +1,13 @@
 /**
- * 侧栏：按项目（cwd）分组的会话列表，交互对齐 参考实现 的
- * Sidebar/WorkspaceGroup/SessionRow —— 组可收起、组内默认 5 条 +
- * 展开更多、搜索过滤、含当前会话的组自动展开。
+ * 侧栏：按项目（cwd）分组的会话列表（shadcn/Tailwind 实现）。
+ * 对齐契约：容器 px-3 + 行内 px-2 → 内容起点 20px；行首 16px 图标槽 + 8px
+ * 间距 → 会话标题正对组名。
  */
 import { useMemo, useState } from 'react'
+import { ChevronDown, ChevronUp, Folder, Plus, Search } from 'lucide-react'
 import type { SessionSummary } from '../types'
 import { groupKey, groupName, relTime, sessionTitle } from '../lib/format'
-import { ChevronDownIcon, ChevronUpIcon, FolderIcon, PlusIcon, SearchIcon } from './icons'
+import { cn } from '@/lib/utils'
 
 const GROUP_LIMIT = 5
 
@@ -31,6 +32,9 @@ function toggled(set: ReadonlySet<string>, key: string): Set<string> {
   return next
 }
 
+const rowBase =
+  'flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-[13px] leading-tight cursor-pointer hover:bg-sidebar-accent'
+
 export function Sidebar({ sessions, loading, activeId, onSelect, onNewSession }: Props) {
   const [q, setQ] = useState('')
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set())
@@ -45,7 +49,6 @@ export function Sidebar({ sessions, loading, activeId, onSelect, onNewSession }:
             (s.first_message ?? '').toLowerCase().includes(needle) ||
             groupName(s).toLowerCase().includes(needle),
         )
-    // 列表已按 mtime 倒序 → 组按各自最新会话自然有序，组内新的在上
     const byKey = new Map<string, Group>()
     for (const s of list) {
       const key = groupKey(s)
@@ -62,31 +65,34 @@ export function Sidebar({ sessions, loading, activeId, onSelect, onNewSession }:
   const filtering = q.trim() !== ''
 
   return (
-    <aside className="side">
-      <div className="ch">
-        <span className="ch-name">cc-web</span>
+    <aside className="flex w-[264px] shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground">
+      <div className="flex min-h-[50px] items-center gap-2 p-3">
+        <span className="text-sm leading-[22px] font-medium">cc-web</span>
       </div>
-      <div className="btn-wrap">
-        <button className="btn-new-chat" onClick={onNewSession}>
-          <PlusIcon />
-          <span>新建会话</span>
+      <div className="px-3">
+        <button className={rowBase} onClick={onNewSession}>
+          <Plus className="size-4 shrink-0 text-muted-foreground" />
+          <span className="truncate">新建会话</span>
         </button>
-      </div>
-      <div className="search-wrap">
-        <div className="search">
-          <span className="search-icon"><SearchIcon /></span>
+        <label className={cn(rowBase, 'focus-within:bg-sidebar-accent')}>
+          <Search className="size-3.5 shrink-0 text-muted-foreground" />
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="搜索会话…"
             spellCheck={false}
+            className="w-full min-w-0 bg-transparent outline-none placeholder:text-faint"
           />
-        </div>
+        </label>
       </div>
-      <div className="sessions">
-        {loading && groups.length === 0 && <div className="side-empty">加载中…</div>}
+      <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3 [&::-webkit-scrollbar]:w-1">
+        {loading && groups.length === 0 && (
+          <div className="px-2 py-4 text-[13px] text-faint">加载中…</div>
+        )}
         {!loading && groups.length === 0 && (
-          <div className="side-empty">{filtering ? '没有匹配的会话' : '没有会话'}</div>
+          <div className="px-2 py-4 text-[13px] text-faint">
+            {filtering ? '没有匹配的会话' : '没有会话'}
+          </div>
         )}
         {groups.map((g) => {
           const isCollapsed = collapsed.has(g.key)
@@ -96,38 +102,48 @@ export function Sidebar({ sessions, loading, activeId, onSelect, onNewSession }:
           return (
             <div key={g.key}>
               <div
-                className="gh"
+                className={cn(rowBase, 'mt-1.5 select-none text-muted-foreground')}
                 title={g.key}
                 onClick={() => setCollapsed((c) => toggled(c, g.key))}
               >
-                <span className="gh-folder"><FolderIcon /></span>
-                <span className="gh-name">{g.name}</span>
-                <span className="gh-n">{g.sessions.length}</span>
+                <span className="flex w-4 shrink-0 justify-center">
+                  <Folder className="size-[15px]" />
+                </span>
+                <span className="min-w-0 flex-1 truncate">{g.name}</span>
+                <span className="text-xs text-faint tabular-nums">{g.sessions.length}</span>
               </div>
               {!isCollapsed &&
                 shown.map((s) => (
                   <div
                     key={s.session_id}
-                    className={s.session_id === activeId ? 'se on' : 'se'}
+                    className={cn(rowBase, s.session_id === activeId && 'bg-selected hover:bg-selected')}
                     title={s.first_message ?? s.session_id}
                     onClick={() => onSelect(s.session_id)}
                   >
-                    <span className="se-lead" />
-                    <span className="se-t">{sessionTitle(s)}</span>
-                    <span className="se-ts">{relTime(s.mtime_ms)}</span>
+                    <span className="w-4 shrink-0" />
+                    <span className="min-w-0 flex-1 truncate font-[450]">{sessionTitle(s)}</span>
+                    <span className="shrink-0 text-right text-xs text-faint tabular-nums">
+                      {relTime(s.mtime_ms)}
+                    </span>
                   </div>
                 ))}
               {!isCollapsed && !filtering && g.sessions.length > GROUP_LIMIT && (
                 showAll ? (
                   activeIdx < GROUP_LIMIT && (
-                    <button className="show-more" onClick={() => setExpanded((x) => toggled(x, g.key))}>
-                      <span className="show-more-lead"><ChevronUpIcon /></span>
+                    <button
+                      className={cn(rowBase, 'text-xs text-muted-foreground')}
+                      onClick={() => setExpanded((x) => toggled(x, g.key))}
+                    >
+                      <span className="flex w-4 shrink-0 justify-center"><ChevronUp className="size-3.5" /></span>
                       收起
                     </button>
                   )
                 ) : (
-                  <button className="show-more" onClick={() => setExpanded((x) => toggled(x, g.key))}>
-                    <span className="show-more-lead"><ChevronDownIcon /></span>
+                  <button
+                    className={cn(rowBase, 'text-xs text-muted-foreground')}
+                    onClick={() => setExpanded((x) => toggled(x, g.key))}
+                  >
+                    <span className="flex w-4 shrink-0 justify-center"><ChevronDown className="size-3.5" /></span>
                     展开更多 ({g.sessions.length - GROUP_LIMIT})
                   </button>
                 )

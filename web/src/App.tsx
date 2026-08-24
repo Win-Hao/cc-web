@@ -15,6 +15,11 @@ import type {
   Approval, ChatMsg, HistoryMessage, HubEvent, ModelOption, ProjectChoice, SessionState,
   SessionSummary, ToolSeg,
 } from './types'
+import { Badge } from '@/components/ui/badge'
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select'
+import { cn } from '@/lib/utils'
 import { Sidebar } from './components/Sidebar'
 import { Chat } from './components/Chat'
 import { Composer } from './components/Composer'
@@ -475,7 +480,7 @@ export default function App() {
   if (active?.cwd != null) lastCwdRef.current = active.cwd
 
   return (
-    <div className="app">
+    <div className="flex h-full">
       <Sidebar
         sessions={sessions}
         loading={sessionsLoading}
@@ -483,56 +488,72 @@ export default function App() {
         onSelect={selectSession}
         onNewSession={enterDraft}
       />
-      <div className="main">
-        <header className="topbar">
-          <span className="topbar-title">{active !== undefined ? sessionTitle(active) : 'cc-web'}</span>
-          {sessionId !== null && (
-          <span className={`state-pill ${connected ? state : 'offline'}`}>
-            <span className="dot" />
-            {connected ? STATE_LABEL[state] : '已断线，重连中…'}
+      <div className="flex min-w-0 flex-1 flex-col">
+        <header className="flex min-h-[50px] flex-wrap items-center gap-3 border-b px-4 py-2.5">
+          <span className="min-w-0 flex-1 truncate text-sm font-medium">
+            {active !== undefined ? sessionTitle(active) : 'cc-web'}
           </span>
-          )}
           {sessionId !== null && (
-          <>
-          <select
-            className="sel"
-            defaultValue=""
-            onChange={(e) => {
-              if (e.target.value !== '' && sessionId !== null) {
-                post(`/api/v1/sessions/${sessionId}/model`, { model: e.target.value }).catch(
-                  (err: Error) => appendError(err.message),
-                )
-              }
-            }}
-          >
-            <option value="" disabled>模型</option>
-            {models.map((m) => (
-              <option key={m.value} value={m.value}>{m.label}</option>
-            ))}
-          </select>
-          <select
-            className="sel"
-            value={permMode}
-            onChange={(e) => {
-              const prev = permMode
-              const next = e.target.value
-              setPermMode(next)
-              if (sessionId !== null) {
-                post(`/api/v1/sessions/${sessionId}/permission-mode`, { mode: next }).catch(
-                  (err: Error) => {
-                    setPermMode(prev) // 切换被拒（或引擎没起来）→ 下拉框回滚，不留假状态
-                    appendError(err.message)
-                  },
-                )
-              }
-            }}
-          >
-            {PERMISSION_MODES.map((m) => (
-              <option key={m} value={m}>{m}</option>
-            ))}
-          </select>
-          {usage !== '' && <span className="topbar-usage">{usage}</span>}
-          </>
+            <>
+              <Badge
+                variant={
+                  !connected
+                    ? 'destructive'
+                    : state === 'running'
+                      ? 'accent'
+                      : state === 'waiting-approval'
+                        ? 'warning'
+                        : 'default'
+                }
+              >
+                <span
+                  className={cn(
+                    'size-[7px] rounded-full bg-current',
+                    (state === 'running' || !connected) && 'animate-pulse',
+                  )}
+                />
+                {connected ? STATE_LABEL[state] : '已断线，重连中…'}
+              </Badge>
+              <Select
+                onValueChange={(value) => {
+                  post(`/api/v1/sessions/${sessionId}/model`, { model: value }).catch(
+                    (err: Error) => appendError(err.message),
+                  )
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="模型" />
+                </SelectTrigger>
+                <SelectContent>
+                  {models.map((m) => (
+                    <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select
+                value={permMode}
+                onValueChange={(next) => {
+                  const prev = permMode
+                  setPermMode(next)
+                  post(`/api/v1/sessions/${sessionId}/permission-mode`, { mode: next }).catch(
+                    (err: Error) => {
+                      setPermMode(prev) // 切换被拒（或引擎没起来）→ 下拉框回滚，不留假状态
+                      appendError(err.message)
+                    },
+                  )
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {PERMISSION_MODES.map((m) => (
+                    <SelectItem key={m} value={m}>{m}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {usage !== '' && <span className="text-xs text-faint tabular-nums">{usage}</span>}
+            </>
           )}
         </header>
         {sessionId === null ? (

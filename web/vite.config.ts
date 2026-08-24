@@ -1,12 +1,16 @@
 import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
 
 // root 显式指到本目录：`vite --config web/vite.config.ts` 从仓库根跑，
 // 不设的话 root 会落在 cwd。产物进 <repo>/dist/web，由 cc-web 服务器托管。
 export default defineConfig({
   root: fileURLToPath(new URL('.', import.meta.url)),
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
+  resolve: {
+    alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
+  },
   build: {
     outDir: '../dist/web',
     emptyOutDir: true,

@@ -1,9 +1,14 @@
 /**
- * AskUserQuestion 交互卡：CC 通过 can_use_tool 反问用户。
- * 单选/多选选项 + 自由文本兜底；提交走 allow + updatedInput
- * （{questions, answers: {问题: 选项label}, response?}，sdk-tools.d.ts）。
+ * AskUserQuestion 交互卡（shadcn Dialog）：单选/多选选项 + 自由文本兜底；
+ * 提交走 allow + updatedInput（sdk-tools.d.ts 的形状）。
  */
 import { useMemo, useState } from 'react'
+import { Check } from 'lucide-react'
+import { Dialog, DialogContent, DialogFooter } from '@/components/ui/dialog'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Badge } from '@/components/ui/badge'
+import { cn } from '@/lib/utils'
 import type { Approval } from '../types'
 
 interface QOption {
@@ -89,27 +94,42 @@ export function QuestionDialog({ approval, onAnswer, onDeny }: Props) {
   }
 
   return (
-    <div className="backdrop">
-      <div className="dialog q-dialog">
+    <Dialog open>
+      <DialogContent
+        className="max-h-[82vh] overflow-y-auto"
+        onPointerDownOutside={(e) => e.preventDefault()}
+        onEscapeKeyDown={(e) => e.preventDefault()}
+      >
         {questions.map((q, qi) => (
-          <div className="q-block" key={qi}>
-            {q.header !== '' && <span className="q-chip">{q.header}</span>}
-            <div className="q-text">{q.question}</div>
-            <div className="q-opts">
+          <div className="mb-4" key={qi}>
+            {q.header !== '' && <Badge variant="outline" className="mb-2">{q.header}</Badge>}
+            <div className="mb-3 text-[15px] font-medium">{q.question}</div>
+            <div className="flex flex-col gap-2">
               {q.options.map((o) => {
                 const on = picked.get(qi)?.has(o.label) === true
                 return (
                   <div
                     key={o.label}
-                    className={on ? 'q-opt on' : 'q-opt'}
+                    className={cn(
+                      'flex cursor-pointer items-start gap-2 rounded-lg border px-2.5 py-2 transition-colors hover:bg-sidebar-accent',
+                      on && 'border-primary bg-accent hover:bg-accent',
+                    )}
                     onClick={() => toggle(qi, o.label, q.multiSelect)}
                   >
-                    <span className={q.multiSelect ? 'q-mark multi' : 'q-mark'}>
-                      {on ? '✓' : ''}
+                    <span
+                      className={cn(
+                        'mt-0.5 flex size-4 shrink-0 items-center justify-center border border-input text-accent-foreground',
+                        q.multiSelect ? 'rounded-sm' : 'rounded-full',
+                        on && 'border-primary',
+                      )}
+                    >
+                      {on && <Check className="size-3" />}
                     </span>
-                    <span className="q-opt-main">
-                      <span className="q-opt-label">{o.label}</span>
-                      {o.description !== '' && <span className="q-opt-desc">{o.description}</span>}
+                    <span className="flex min-w-0 flex-col">
+                      <span className="text-[13px] font-medium">{o.label}</span>
+                      {o.description !== '' && (
+                        <span className="text-xs text-muted-foreground">{o.description}</span>
+                      )}
                     </span>
                   </div>
                 )
@@ -117,8 +137,7 @@ export function QuestionDialog({ approval, onAnswer, onDeny }: Props) {
             </div>
           </div>
         ))}
-        <input
-          className="proj-input"
+        <Input
           value={custom}
           onChange={(e) => setCustom(e.target.value)}
           onKeyDown={(e) => {
@@ -127,11 +146,11 @@ export function QuestionDialog({ approval, onAnswer, onDeny }: Props) {
           placeholder="其他（自由输入）…"
           spellCheck={false}
         />
-        <div className="dialog-row">
-          <button className="btn" onClick={onDeny}>取消</button>
-          <button className="btn primary" disabled={!canSubmit} onClick={submit}>回答</button>
-        </div>
-      </div>
-    </div>
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={onDeny}>取消</Button>
+          <Button size="sm" disabled={!canSubmit} onClick={submit}>回答</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
