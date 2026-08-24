@@ -119,6 +119,12 @@ TUI 显示的生成名只存在进程级注册表（`~/.claude/sessions/<pid>.js
 - 实时流的 thinking 增量：`stream_event` 的 `content_block_delta` 帧，
   `delta.type === 'thinking_delta'`，字段是 `delta.thinking`（不是 text）。
 
+**stdin 的 user 帧接受 image 块**（M43 真机实测，2026-08）：
+`{type:'user', message:{role:'user', content:[{type:'image', source:{type:'base64',
+media_type, data}}, {type:'text', text}]}}` —— 引擎正确识图（发红色 PNG 问
+颜色，回答「红色」）。纯图无文字也接受。这与 sdk.d.ts 的 SDKUserMessage
+注释一致（content 支持 text/image/document/tool_result 块）。
+
 **set_permission_mode 的 bypass 门槛**（M19 实测，基线 2.1.241）：
 运行时切到 `bypassPermissions` 要求进程启动时带
 `--allow-dangerously-skip-permissions`（把 bypass 变成可选项，默认行为

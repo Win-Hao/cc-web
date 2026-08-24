@@ -21,7 +21,7 @@ import { aggregateSessionUsage } from '#/usage/aggregate.js'
 import { findSubagentFile, listSubagents } from '#/sessions/subagents.js'
 import { normalizeMessage, paginate } from './history.js'
 import { SessionBusyError, ControlRequestError, ApprovalExpiredError } from './registry.js'
-import type { SessionRegistry } from './registry.js'
+import type { PromptImage, SessionRegistry } from './registry.js'
 import { bearerAuth } from '#/auth/middleware.js'
 
 export interface AppDeps {
@@ -39,6 +39,26 @@ export interface AppDeps {
 
 const HISTORY_DEFAULT_LIMIT = 50
 const HISTORY_MAX_LIMIT = 200
+
+/** prompt 图片校验（M43）：Messages API 支持的四种位图 + 5MB 上限 */
+const IMAGE_MEDIA_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
+const MAX_IMAGE_DATA = 7_000_000 // base64 字符数 ≈ 5MB 原始数据（API 单图上限）
+const MAX_IMAGES = 8
+
+/** 合法 → PromptImage[]（可为空）；形状/类型/大小/数量任一不合法 → null */
+function parsePromptImages(v: unknown): PromptImage[] | null {
+  if (v === undefined) return []
+  if (!Array.isArray(v) || v.length > MAX_IMAGES) return null
+  const out: PromptImage[] = []
+  for (const item of v) {
+    if (typeof item !== 'object' || item === null) return null
+    const img = item as Record<string, unknown>
+    if (typeof img.media_type !== 'string' || !IMAGE_MEDIA_TYPES.has(img.media_type)) return null
+    if (typeof img.data !== 'string' || img.data === '' || img.data.length > MAX_IMAGE_DATA) return null
+    out.push({ media_type: img.media_type, data: img.data })
+  }
+  return out
+}
 
 function ok(data: unknown) {
   return { code: 0, msg: 'success', data, trace_id: randomUUID() }
@@ -284,13 +304,13 @@ export function createApp(deps: AppDeps) {
   app.post('/api/v1/sessions/:id/prompt', async (c) => {
     if (deps.registry === undefined) return c.json(fail(50001, 'registry not configured'))
     const body: unknown = await c.req.json().catch(() => null)
-    const text =
-      typeof body === 'object' && body !== null
-        ? (body as Record<string, unknown>).text
-        : null
-    if (typeof text !== 'string' || text === '') return c.json(fail(40001, 'text required'))
+    const b = typeof body === 'object' && body !== null ? (body as Record<string, unknown>) : {}
+    const text = typeof b.text === 'string' ? b.text : ''
+    const images = parsePromptImages(b.images)
+    if (images === null) return c.json(fail(40001, 'invalid images'))
+    if (text === '' && images.length === 0) return c.json(fail(40001, 'text required'))
     try {
-      await deps.registry.prompt(c.req.param('id'), text)
+      await deps.registry.prompt(c.req.param('id'), text, images)
       return c.json(ok({}))
     } catch (err) {
       if (err instanceof SessionBusyError) {

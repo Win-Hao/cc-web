@@ -13,7 +13,7 @@ import { groupName, sessionTitle } from './lib/format'
 import { humanText, segmentsFromContent, textOfSegments, toolResultsFromContent } from './lib/segments'
 import type { ToolResultInfo } from './lib/segments'
 import type {
-  Approval, ChatMsg, HistoryMessage, HubEvent, ModelOption, ProjectChoice, SessionState,
+  Approval, ChatMsg, HistoryMessage, HubEvent, ImageRef, ModelOption, ProjectChoice, SessionState,
   SessionSummary, ToolSeg,
 } from './types'
 import { Badge } from '@/components/ui/badge'
@@ -513,10 +513,23 @@ export default function App() {
   }, [])
 
   const sendPrompt = useCallback(
-    (text: string) => {
+    (text: string, images: ImageRef[] = []) => {
       if (sessionId === null) return
-      appendMsg({ role: 'user', segments: [{ kind: 'text', text }], meta: null, sidechain: null })
-      post(`/api/v1/sessions/${sessionId}/prompt`, { text }).catch((e: Error) => appendError(e.message))
+      appendMsg({
+        role: 'user',
+        segments: [
+          ...(text !== '' ? [{ kind: 'text' as const, text }] : []),
+          ...images.map((image) => ({ kind: 'image' as const, image })),
+        ],
+        meta: null,
+        sidechain: null,
+      })
+      post(`/api/v1/sessions/${sessionId}/prompt`, {
+        text,
+        ...(images.length > 0
+          ? { images: images.map((i) => ({ media_type: i.mediaType, data: i.data })) }
+          : {}),
+      }).catch((e: Error) => appendError(e.message))
     },
     [sessionId, appendMsg, appendError],
   )

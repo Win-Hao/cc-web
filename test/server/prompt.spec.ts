@@ -106,6 +106,55 @@ describe('POST /api/v1/sessions/:id/prompt', () => {
     expect(body.code).not.toBe(0)
   })
 
+  it('带图片 → user 帧 content 是 image 块 + text 块（M43）', async () => {
+    const { app, recPath } = await setupReal()
+    const { body } = await postJson(app, '/api/v1/sessions/s1/prompt', {
+      text: '这是什么',
+      images: [{ media_type: 'image/png', data: 'aGVsbG8=' }],
+    })
+    expect(body.code).toBe(0)
+    await waitFor(() => {
+      const frame = JSON.parse(readFileSync(recPath, 'utf8').trim().split('\n')[0]!) as {
+        message: { content: unknown[] }
+      }
+      expect(frame.message.content).toEqual([
+        { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'aGVsbG8=' } },
+        { type: 'text', text: '这是什么' },
+      ])
+    })
+  })
+
+  it('只有图片没有文字也能发（M43：截图直接问）', async () => {
+    const { app, recPath } = await setupReal()
+    const { body } = await postJson(app, '/api/v1/sessions/s1/prompt', {
+      images: [{ media_type: 'image/jpeg', data: 'aGVsbG8=' }],
+    })
+    expect(body.code).toBe(0)
+    await waitFor(() => {
+      const frame = JSON.parse(readFileSync(recPath, 'utf8').trim().split('\n')[0]!) as {
+        message: { content: { type: string }[] }
+      }
+      expect(frame.message.content).toHaveLength(1)
+      expect(frame.message.content[0]!.type).toBe('image')
+    })
+  })
+
+  it('非法图片被拒：media_type 不在白名单 / data 超限 / 超过 8 张（M43）', async () => {
+    const { app } = setupFake()
+    const bad1 = await postJson(app, '/api/v1/sessions/s1/prompt', {
+      images: [{ media_type: 'image/svg+xml', data: 'aGVsbG8=' }],
+    })
+    expect(bad1.body.code).not.toBe(0)
+    const bad2 = await postJson(app, '/api/v1/sessions/s1/prompt', {
+      images: [{ media_type: 'image/png', data: 'A'.repeat(7_100_000) }],
+    })
+    expect(bad2.body.code).not.toBe(0)
+    const bad3 = await postJson(app, '/api/v1/sessions/s1/prompt', {
+      images: Array.from({ length: 9 }, () => ({ media_type: 'image/png', data: 'aGVsbG8=' })),
+    })
+    expect(bad3.body.code).not.toBe(0)
+  })
+
   it('并发两个 prompt 只成功一个（R7 竞态：idle 检查与置位之间不能有 await 窗口）', async () => {
     const { app, engines } = setupFake()
     const results = await Promise.all([

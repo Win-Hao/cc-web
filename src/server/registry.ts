@@ -49,6 +49,12 @@ export type EngineFactory = (
 ) => EngineLike | Promise<EngineLike>
 export type SessionState = 'idle' | 'running' | 'waiting-approval'
 
+/** prompt 附带的图片（M43）：base64 + 媒体类型，校验在 app 层 */
+export interface PromptImage {
+  media_type: string
+  data: string
+}
+
 export class SessionBusyError extends Error {
   constructor(sessionId: string) {
     super(`session ${sessionId} is busy`)
@@ -240,17 +246,23 @@ export class SessionRegistry {
     await Promise.all([...this.engines.values()].map((e) => e.stop()))
   }
 
-  /** 发提示词。非 idle 直接拒绝（R7）。 */
-  async prompt(sessionId: string, text: string): Promise<void> {
+  /** 发提示词。非 idle 直接拒绝（R7）。images 走 base64 image 块（M43）。 */
+  async prompt(sessionId: string, text: string, images: PromptImage[] = []): Promise<void> {
     if (this.state(sessionId) !== 'idle') throw new SessionBusyError(sessionId)
     // 先同步占住 running 再 await：ensure() 要 spawn 引擎（几百毫秒），
     // 不占位的话并发的第二个 prompt 也会通过上面的 idle 检查（R7 竞态）
     this.setState(sessionId, 'running')
     try {
       const engine = await this.ensure(sessionId)
+      // 图在前文在后（Messages API 的推荐顺序）；纯图不发空 text 块
+      const content: unknown[] = images.map((img) => ({
+        type: 'image',
+        source: { type: 'base64', media_type: img.media_type, data: img.data },
+      }))
+      if (text !== '') content.push({ type: 'text', text })
       engine.send({
         type: 'user',
-        message: { role: 'user', content: [{ type: 'text', text }] },
+        message: { role: 'user', content },
       })
       this.touch(sessionId)
     } catch (err) {
