@@ -98,6 +98,11 @@ effort  session_id  userType  entrypoint  cwd  sessionId  version  gitBranch
   `toolUseId` 对应主转写里 Task/Agent 调用的 `tool_use.id`，这是唯一的锚。
   实时流里对应帧的顶层 `parent_tool_use_id` 同 id。两种格式都要支持。
 
+**会话标题**（M20 实测，2.1.241）：jsonl 里没有 summary/title 行；
+TUI 显示的生成名只存在进程级注册表（`~/.claude/sessions/<pid>.json` 的
+`name`，进程退出即失效），headless 会话拿不到。所以列表/顶栏的标题
+只能取首条人话消息，每轮 result 后刷新一次列表跟随。
+
 每行还带 `cwd`：**resume 时引擎 spawn 的 `cwd` 必须设成它**，
 否则 CLAUDE.md、相对路径、git 上下文全错。新建会话则是用户指定的目录。
 

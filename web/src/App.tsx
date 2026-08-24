@@ -94,13 +94,26 @@ export default function App() {
     )
   }, [])
 
-  /* ── 会话列表 ── */
+  /* ── 会话列表 ──
+     每轮 result 后也刷一次（M20）：CC 把第一轮写进 jsonl 后，新会话的
+     标题（首条人话）才出现 —— 顶栏和侧栏跟着从 uuid 变成真标题。
+     列表扫描有 mtime 缓存（M15），刷新是毫秒级的。 */
+  const refreshSessions = useCallback(async () => {
+    const d = await api<{ sessions: SessionSummary[] }>('/api/v1/sessions')
+    setSessions((prev) => {
+      // 新建会话在 jsonl 落盘前不在服务端列表里 —— 保住乐观条目（project_slug 为空标记）
+      const optimistic = prev.filter(
+        (p) => p.project_slug === '' && !d.sessions.some((s) => s.session_id === p.session_id),
+      )
+      return [...optimistic, ...d.sessions]
+    })
+  }, [])
+
   useEffect(() => {
-    api<{ sessions: SessionSummary[] }>('/api/v1/sessions')
-      .then((d) => setSessions(d.sessions))
+    refreshSessions()
       .catch((e: Error) => appendError(e.message))
       .finally(() => setSessionsLoading(false))
-  }, [appendError])
+  }, [refreshSessions, appendError])
 
   /* ── 用量（拿不到就不显示，D5）── */
   const loadUsage = useCallback(async (id: string) => {
@@ -308,6 +321,7 @@ export default function App() {
             setStream('')
             void loadUsage(sessionId)
             void loadSubagents(sessionId) // 本轮新 spawn 的 subagent 落盘了，补锚点
+            refreshSessions().catch(() => {}) // 标题/排序跟随（新会话从 uuid 变真标题）
           }
           break
         }
@@ -360,7 +374,7 @@ export default function App() {
       if (retry !== null) clearTimeout(retry)
       ws?.close()
     }
-  }, [sessionId, appendError, loadHistory, loadUsage, loadModels, loadSubagents, patchToolResults])
+  }, [sessionId, appendError, loadHistory, loadUsage, loadModels, loadSubagents, patchToolResults, refreshSessions])
 
   const selectSession = useCallback((id: string) => {
     setSessionId(id)

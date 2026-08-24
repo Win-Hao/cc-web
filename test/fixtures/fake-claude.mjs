@@ -17,6 +17,8 @@
  *   --delay   每帧之间的间隔毫秒，模拟流式
  *   --exit    吐完之后用这个码退出，默认 0；非 0 用来测「引擎崩了」
  *   --hold    吐完之后不退出，挂着直到被杀 —— 测 stop()/退出钩子用
+ *   --echo-result  每收到一行 stdin 就回一帧 {"type":"result","subtype":"success"}
+ *             —— 模拟「每轮对话以 result 收尾」，测状态机/刷新逻辑用
  *   --spawn-sleeper  启动时再 spawn 一个不死孙进程（同进程组），并先吐一帧
  *             {"type":"fake-claude.sleeper","pid":N} —— 测按进程组杀（R1）用
  */
@@ -38,6 +40,7 @@ const delay = Number(arg('delay', '0'))
 const exitCode = Number(arg('exit', '0'))
 const hold = has('hold')
 const spawnSleeper = has('spawn-sleeper')
+const echoResult = has('echo-result')
 
 // 收 stdin 并落盘。注意即使不 record 也要 resume()，
 // 否则 stdin 缓冲区满了会把父进程的写阻塞住。
@@ -48,6 +51,12 @@ if (recordPath !== undefined) {
 } else {
   process.stdin.resume()
   process.stdin.on('data', () => {})
+}
+
+if (echoResult) {
+  process.stdin.on('data', () => {
+    process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success' }) + '\n')
+  })
 }
 
 const lines =
