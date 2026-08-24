@@ -44,6 +44,7 @@ export default function App() {
   )
   const [msgs, setMsgs] = useState<ChatMsg[]>([])
   const [stream, setStream] = useState('')
+  const [streamThinking, setStreamThinking] = useState('')
   const [state, setState] = useState<SessionState>('idle')
   const [approval, setApproval] = useState<Approval | null>(null)
   const [usage, setUsage] = useState('')
@@ -101,6 +102,7 @@ export default function App() {
             ...seg,
             status: hit.isError ? ('error' as const) : ('ok' as const),
             result: hit.text !== '' ? hit.text : seg.result,
+            images: hit.images.length > 0 ? hit.images : seg.images,
           }
         })
         return { ...m, segments }
@@ -284,11 +286,20 @@ export default function App() {
               const t = seg as ToolSeg
               t.status = r.isError ? 'error' : 'ok'
               if (r.text !== '') t.result = r.text
+              if (r.images.length > 0) t.images = r.images
             }
           }
-          const text = humanText(textOfSegments(segmentsFromContent(content)))
-          if (text !== '') {
-            out.push({ key: nextKey(), role: 'user', segments: [{ kind: 'text', text }], meta: null, sidechain: null })
+          const segs = segmentsFromContent(content)
+          const text = humanText(textOfSegments(segs))
+          const images = segs.filter((s) => s.kind === 'image')
+          if (text !== '' || images.length > 0) {
+            out.push({
+              key: nextKey(),
+              role: 'user',
+              segments: [...(text !== '' ? [{ kind: 'text' as const, text }] : []), ...images],
+              meta: null,
+              sidechain: null,
+            })
           }
         }
       }
@@ -304,6 +315,7 @@ export default function App() {
     if (sessionId === null) return
     setMsgs([])
     setStream('')
+    setStreamThinking('')
     setApproval(null)
     setModelValue(null)
     setModelResolved(null)
@@ -356,9 +368,13 @@ export default function App() {
           setState(data.state as SessionState)
           break
         case 'delta': {
-          const evt = data.event as { type?: string; delta?: { type?: string; text?: string } } | undefined
+          const evt = data.event as
+            | { type?: string; delta?: { type?: string; text?: string; thinking?: string } }
+            | undefined
           if (evt?.type === 'content_block_delta' && evt.delta?.type === 'text_delta') {
             setStream((s) => s + (evt.delta?.text ?? ''))
+          } else if (evt?.type === 'content_block_delta' && evt.delta?.type === 'thinking_delta') {
+            setStreamThinking((s) => s + (evt.delta?.thinking ?? ''))
           }
           break
         }
@@ -396,6 +412,7 @@ export default function App() {
             const segments = segmentsFromContent(message.content)
             if (segments.length > 0) {
               setStream('')
+              setStreamThinking('')
               const key = nextKey()
               segments.forEach((seg, si) => {
                 if (seg.kind === 'tool' && seg.id !== null) toolLocRef.current.set(seg.id, { key, si })
@@ -410,19 +427,28 @@ export default function App() {
             }
           } else if (data.type === 'user' && message !== undefined) {
             patchToolResults(toolResultsFromContent(message.content))
-            const text = humanText(textOfSegments(segmentsFromContent(message.content)))
-            if (text !== '') {
+            const userSegs = segmentsFromContent(message.content)
+            const text = humanText(textOfSegments(userSegs))
+            const images = userSegs.filter((s) => s.kind === 'image')
+            if (text !== '' || images.length > 0) {
               // 别的标签页发的也渲染；自己发的已乐观渲染 → 和上一条同文本就跳过
               setMsgs((prev) => {
                 const last = prev[prev.length - 1]
                 if (last !== undefined && last.role === 'user' && textOfSegments(last.segments) === text) {
                   return prev
                 }
-                return [...prev, { key: nextKey(), role: 'user', segments: [{ kind: 'text', text }], meta: null, sidechain: null }]
+                return [...prev, {
+                  key: nextKey(),
+                  role: 'user',
+                  segments: [...(text !== '' ? [{ kind: 'text' as const, text }] : []), ...images],
+                  meta: null,
+                  sidechain: null,
+                }]
               })
             }
           } else if (data.type === 'result') {
             setStream('')
+            setStreamThinking('')
             void loadUsage(sessionId)
             void loadContext(sessionId) // context 环跟着每轮更新
             void loadSubagents(sessionId) // 本轮新 spawn 的 subagent 落盘了，补锚点
@@ -674,7 +700,7 @@ export default function App() {
           />
         ) : (
           <>
-            <Chat messages={msgs} streamText={stream} sessionId={sessionId} />
+            <Chat messages={msgs} streamText={stream} streamThinking={streamThinking} sessionId={sessionId} />
             <Composer
               disabled={false}
               running={state !== 'idle'}

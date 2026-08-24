@@ -2,7 +2,7 @@
  * content 块 → 渲染段。历史（server 净化过）和实时帧（原始 block）
  * 形状一致，这里是唯一一份提取逻辑。
  */
-import type { Segment, TextSeg } from '../types'
+import type { ImageRef, Segment, TextSeg } from '../types'
 
 const cap = (s: string, n: number): string => (s.length > n ? `${s.slice(0, n)}…` : s)
 
@@ -50,20 +50,35 @@ export function segmentsFromContent(content: unknown): Segment[] {
         detail: toolDetail(blk.input),
         status: 'pending',
         result: null,
+        images: [],
         subCount: 0,
         agent: null,
       })
+    } else if (blk.type === 'thinking' && typeof blk.thinking === 'string' && blk.thinking !== '') {
+      out.push({ kind: 'thinking', text: blk.thinking })
     } else if (blk.type === 'image') {
-      out.push({ kind: 'text', text: '[图片]' })
+      const ref = imageRef(blk)
+      if (ref !== null) out.push({ kind: 'image', image: ref })
+      else out.push({ kind: 'text', text: '[图片]' })
     }
   }
   return out
+}
+
+/** image 块的 source（历史和实时帧同形）→ ImageRef；形状不对 → null */
+function imageRef(blk: Record<string, unknown>): ImageRef | null {
+  const src = blk.source
+  if (typeof src !== 'object' || src === null) return null
+  const s = src as Record<string, unknown>
+  if (s.type !== 'base64' || typeof s.data !== 'string' || s.data === '') return null
+  return { mediaType: typeof s.media_type === 'string' ? s.media_type : 'image/png', data: s.data }
 }
 
 export interface ToolResultInfo {
   id: string | null
   text: string
   isError: boolean
+  images: ImageRef[]
 }
 
 export function toolResultsFromContent(content: unknown): ToolResultInfo[] {
@@ -73,26 +88,43 @@ export function toolResultsFromContent(content: unknown): ToolResultInfo[] {
     if (typeof b !== 'object' || b === null) continue
     const blk = b as Record<string, unknown>
     if (blk.type !== 'tool_result') continue
+    const flat = flattenResult(blk.content)
+    // 历史（server 已抽好 images 字段）和实时帧（原始 image 块）两个来源
+    if (Array.isArray(blk.images)) {
+      for (const img of blk.images) {
+        if (typeof img !== 'object' || img === null) continue
+        const i = img as Record<string, unknown>
+        if (typeof i.data === 'string' && i.data !== '') {
+          flat.images.push({ mediaType: typeof i.media_type === 'string' ? i.media_type : 'image/png', data: i.data })
+        }
+      }
+    }
     out.push({
       id: typeof blk.tool_use_id === 'string' ? blk.tool_use_id : null,
-      text: cap(flattenResult(blk.content), 4000),
+      text: cap(flat.text, 4000),
       isError: blk.is_error === true,
+      images: flat.images,
     })
   }
   return out
 }
 
-function flattenResult(content: unknown): string {
-  if (typeof content === 'string') return content
-  if (!Array.isArray(content)) return ''
+function flattenResult(content: unknown): { text: string; images: ImageRef[] } {
+  if (typeof content === 'string') return { text: content, images: [] }
+  if (!Array.isArray(content)) return { text: '', images: [] }
   const parts: string[] = []
+  const images: ImageRef[] = []
   for (const b of content) {
     if (typeof b !== 'object' || b === null) continue
     const blk = b as Record<string, unknown>
     if (blk.type === 'text' && typeof blk.text === 'string') parts.push(blk.text)
-    else if (blk.type === 'image') parts.push('[图片]')
+    else if (blk.type === 'image') {
+      const ref = imageRef(blk)
+      if (ref !== null) images.push(ref)
+      else parts.push('[图片]')
+    }
   }
-  return parts.join('\n')
+  return { text: parts.join('\n'), images }
 }
 
 export const textOfSegments = (segs: Segment[]): string =>

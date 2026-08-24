@@ -28,11 +28,40 @@ export interface HistoryMessage {
 
 export type HistoryBlock =
   | { type: 'text'; text: string }
+  | { type: 'thinking'; thinking: string }
+  | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } }
+  | {
+      type: 'tool_result'
+      tool_use_id: string | null
+      content: string
+      is_error: boolean
+      /** 截图类工具的返回图（M42）。只在非空时出现 */
+      images?: ImageRef[]
+    }
   | { type: 'tool_use'; id: string | null; name: string; input: unknown }
-  | { type: 'tool_result'; tool_use_id: string | null; content: string; is_error: boolean }
+
+export interface ImageRef {
+  media_type: string
+  data: string
+}
 
 /** 字符串截断上限：tool 输入/输出可能巨大（整文件写入），历史接口只给预览 */
 const MAX_STR = 2000
+
+/**
+ * 图片 base64 上限（字符数，≈2MB 原始数据）。本地服务器，几百 KB 的
+ * 截图直接透传没问题；超过就降级占位，防止单条历史响应几十 MB。
+ */
+const MAX_IMAGE_B64 = 2_800_000
+
+/** image 块 → {media_type, data}；太大或形状不对 → null（调用方置占位） */
+function imageRef(blk: Record<string, unknown>): ImageRef | null {
+  const src = blk.source
+  if (typeof src !== 'object' || src === null) return null
+  const s = src as Record<string, unknown>
+  if (s.type !== 'base64' || typeof s.data !== 'string' || s.data.length > MAX_IMAGE_B64) return null
+  return { media_type: typeof s.media_type === 'string' ? s.media_type : 'image/png', data: s.data }
+}
 
 function capStr(s: string): string {
   return s.length > MAX_STR ? `${s.slice(0, MAX_STR)}…` : s
@@ -51,18 +80,26 @@ function sanitizeValue(v: unknown, depth: number): unknown {
   return v
 }
 
-/** tool_result 的 content（string 或 block 数组）拍平成文本 */
-function flattenResult(content: unknown): string {
-  if (typeof content === 'string') return content
-  if (!Array.isArray(content)) return ''
+/**
+ * tool_result 的 content（string 或 block 数组）→ 文本 + 图片（M42）。
+ * 抽出的图真实渲染，抽不出（超大/形状不对）的图置占位文本。
+ */
+function flattenResult(content: unknown): { text: string; images: ImageRef[] } {
+  if (typeof content === 'string') return { text: content, images: [] }
+  if (!Array.isArray(content)) return { text: '', images: [] }
   const parts: string[] = []
+  const images: ImageRef[] = []
   for (const b of content) {
     if (typeof b !== 'object' || b === null) continue
     const blk = b as Record<string, unknown>
     if (blk.type === 'text' && typeof blk.text === 'string') parts.push(blk.text)
-    else if (blk.type === 'image') parts.push('[图片]')
+    else if (blk.type === 'image') {
+      const ref = imageRef(blk)
+      if (ref !== null) images.push(ref)
+      else parts.push('[图片]')
+    }
   }
-  return parts.join('\n')
+  return { text: parts.join('\n'), images }
 }
 
 function sanitizeContent(message: unknown): HistoryBlock[] | null {
@@ -86,14 +123,20 @@ function sanitizeContent(message: unknown): HistoryBlock[] | null {
         input: sanitizeValue(blk.input, 0),
       })
     } else if (blk.type === 'tool_result') {
+      const flat = flattenResult(blk.content)
       out.push({
         type: 'tool_result',
         tool_use_id: typeof blk.tool_use_id === 'string' ? blk.tool_use_id : null,
-        content: capStr(flattenResult(blk.content)),
+        content: capStr(flat.text),
         is_error: blk.is_error === true,
+        ...(flat.images.length > 0 ? { images: flat.images } : {}),
       })
+    } else if (blk.type === 'thinking' && typeof blk.thinking === 'string') {
+      out.push({ type: 'thinking', thinking: capStr(blk.thinking) })
     } else if (blk.type === 'image') {
-      out.push({ type: 'text', text: '[图片]' })
+      const ref = imageRef(blk)
+      if (ref !== null) out.push({ type: 'image', source: { type: 'base64', ...ref } })
+      else out.push({ type: 'text', text: '[图片]' })
     }
   }
   return out

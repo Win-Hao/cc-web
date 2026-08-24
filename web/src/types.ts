@@ -33,6 +33,21 @@ export interface TextSeg {
   text: string
 }
 
+export interface ThinkingSeg {
+  kind: 'thinking'
+  text: string
+}
+
+export interface ImageRef {
+  mediaType: string
+  data: string
+}
+
+export interface ImageSeg {
+  kind: 'image'
+  image: ImageRef
+}
+
 export interface ToolSeg {
   kind: 'tool'
   id: string | null
@@ -43,13 +58,15 @@ export interface ToolSeg {
   detail: string
   status: 'pending' | 'ok' | 'error'
   result: string | null
+  /** 工具返回的图片（截图类工具，M42） */
+  images: ImageRef[]
   /** 实时归属到这个工具（Task 等）的 subagent 消息数（M17） */
   subCount: number
   /** 新格式 subagent：meta.toolUseId 锚到本工具（M17） */
   agent: { id: string; label: string } | null
 }
 
-export type Segment = TextSeg | ToolSeg
+export type Segment = TextSeg | ThinkingSeg | ImageSeg | ToolSeg
 
 export interface ChatMsg {
   key: string

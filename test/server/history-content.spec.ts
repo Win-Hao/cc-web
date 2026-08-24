@@ -52,12 +52,53 @@ describe('normalizeMessage content 块', () => {
     expect(input.content.endsWith('…')).toBe(true)
   })
 
-  it('图片块置占位，不透传 base64', () => {
+  it('图片块透传（形状对齐实时帧的 source），能真实渲染（M42）', () => {
     const m = normalizeMessage(entry({
       role: 'user',
-      content: [{ type: 'image', source: { type: 'base64', data: 'AAAA'.repeat(10000) } }],
+      content: [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA'.repeat(100) } }],
+    }, 'user'))
+    expect(m.content).toEqual([
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA'.repeat(100) } },
+    ])
+  })
+
+  it('超大图片（>2MB base64）降级为占位，防止历史响应爆炸（M42）', () => {
+    const m = normalizeMessage(entry({
+      role: 'user',
+      content: [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'A'.repeat(3_000_000) } }],
     }, 'user'))
     expect(m.content).toEqual([{ type: 'text', text: '[图片]' }])
+  })
+
+  it('thinking 块透传（M42：前端折叠展示）', () => {
+    const m = normalizeMessage(entry({
+      role: 'assistant',
+      content: [
+        { type: 'thinking', thinking: '先看下文件结构', signature: 'sig-opaque' },
+        { type: 'text', text: '好的' },
+      ],
+    }))
+    expect(m.content).toEqual([
+      { type: 'thinking', thinking: '先看下文件结构' },
+      { type: 'text', text: '好的' },
+    ])
+  })
+
+  it('tool_result 里的图片抽到 images 数组（截图类工具），文本不再置占位（M42）', () => {
+    const m = normalizeMessage(entry({
+      role: 'user',
+      content: [
+        { type: 'tool_result', tool_use_id: 'toolu_1', is_error: false,
+          content: [
+            { type: 'text', text: '截图完成' },
+            { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: 'BBBB' } },
+          ] },
+      ],
+    }, 'user'))
+    expect(m.content).toEqual([
+      { type: 'tool_result', tool_use_id: 'toolu_1', content: '截图完成', is_error: false,
+        images: [{ media_type: 'image/jpeg', data: 'BBBB' }] },
+    ])
   })
 
   it('string content / 无 content 的行为不变', () => {

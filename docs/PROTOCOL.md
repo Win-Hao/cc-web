@@ -106,6 +106,19 @@ TUI 显示的生成名只存在进程级注册表（`~/.claude/sessions/<pid>.js
 每行还带 `cwd`：**resume 时引擎 spawn 的 `cwd` 必须设成它**，
 否则 CLAUDE.md、相对路径、git 上下文全错。新建会话则是用户指定的目录。
 
+**thinking / image 块的落盘形状**（M42 实测，2026-08）：
+
+- assistant 行 content 里的 thinking 块：`{type:'thinking', thinking, signature}`。
+  **`thinking` 可能是空串**（部分模型/配置落盘时脱敏，只留 signature）——
+  渲染方必须跳过空串，否则出一排空折叠块。同一台机器上有的会话有全文、
+  有的全空，按会话为单位。
+- 图片统一是 `{type:'image', source:{type:'base64', media_type, data}}`，
+  出现在三个位置：用户消息 content（粘贴图）、tool_result 的 content 数组
+  （截图类工具）、subagent 转写。实测单图 base64 约 300KB 量级；
+  server 历史接口透传上限 2.8M 字符（≈2MB），超限降级占位文本。
+- 实时流的 thinking 增量：`stream_event` 的 `content_block_delta` 帧，
+  `delta.type === 'thinking_delta'`，字段是 `delta.thinking`（不是 text）。
+
 **set_permission_mode 的 bypass 门槛**（M19 实测，基线 2.1.241）：
 运行时切到 `bypassPermissions` 要求进程启动时带
 `--allow-dangerously-skip-permissions`（把 bypass 变成可选项，默认行为

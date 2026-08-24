@@ -82,7 +82,7 @@ export function SidechainBlock({ fetchPath, label }: Props) {
           {msgs?.map((m, i) => (
             <div className="mt-2 first:mt-0" key={i}>
               {m.segments.map((seg, si) =>
-                seg.kind === 'text' ? (
+                seg.kind === 'thinking' || seg.kind === 'image' ? null : seg.kind === 'text' ? (
                   m.role === 'user' ? (
                     <div
                       className="inline-block rounded-lg border bg-sunken px-2.5 py-1 text-xs break-words whitespace-pre-wrap text-muted-foreground"
