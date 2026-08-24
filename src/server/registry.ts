@@ -27,6 +27,7 @@
 import { randomUUID } from 'node:crypto'
 import type { EventEmitter } from 'node:events'
 import type { EnginePool } from '#/engine/pool.js'
+import { diagnoseEngineFailure } from '#/engine/diagnose.js'
 import { frameToWsEvent } from './normalize.js'
 import type { SessionHub } from './hub.js'
 
@@ -182,7 +183,14 @@ export class SessionRegistry {
       if (isResultFrame(frame)) this.setState(sessionId, 'idle')
     })
     engine.on('error', (err: Error) => {
-      this.hub.publish(sessionId, 'error', { message: err.message })
+      // 失败分类（M41）：登录态失效/额度受限/连接中断/找不到二进制 →
+      // 第一行是能行动的人话，原始报错跟在后面；分类不了就裸转
+      const diag = diagnoseEngineFailure(err.message)
+      this.hub.publish(sessionId, 'error', {
+        message: diag !== null ? `${diag.message}\n${err.message}` : err.message,
+        code: diag?.code ?? null,
+        retryable: diag?.retryable ?? false,
+      })
     })
     engine.on('exit', () => {
       // 引擎死了：从表里移除（下次 prompt 重新 spawn），状态归位，
