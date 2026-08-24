@@ -124,6 +124,9 @@ export function createApp(deps: AppDeps) {
   }
   let metaCache: MetaInfo | null = null
   let metaInflight: Promise<MetaInfo> | null = null
+  /** 套餐额度缓存（M34）：元数据引擎顺带拉，之后借活引擎按需刷新 */
+  let planCache: { payload: unknown; fetched_at: number } | null = null
+  const PLAN_TTL_MS = 5 * 60_000
 
   async function ensureMeta(registry: SessionRegistry): Promise<MetaInfo> {
     if (metaCache !== null) return metaCache
@@ -134,6 +137,9 @@ export function createApp(deps: AppDeps) {
           const modelsPayload = (await registry.listModels(id)) as { models?: unknown } | null
           const settings = await registry.getSettings(id).catch(() => null)
           const ctx = (await registry.getContextUsage(id)) as { maxTokens?: number } | null
+          // 顺手把套餐额度也拉了（M34）：面板秒开，永不为它额外起引擎
+          const usage = await registry.getUsage(id)
+          if (usage !== null) planCache = { payload: usage, fetched_at: Date.now() }
           return {
             models: modelsPayload?.models ?? [],
             settings,
@@ -478,28 +484,36 @@ export function createApp(deps: AppDeps) {
   })
 
   /**
-   * M32：账户级套餐用量（底部菜单的面板）。优先借任意活引擎发 get_usage；
-   * 一个都没有就临时起空白引擎，拿完即停（同 meta 引擎的套路）。
+   * M32/M34：账户级套餐用量（底部菜单的面板）。额度数据只有持凭证的
+   * CC 进程能查（不落盘，实测），但绝不为它额外起引擎：
+   *   1. 元数据引擎启动时顺带拉一次进缓存（页面加载即预热）
+   *   2. 缓存过期（5min）且恰有活引擎 → 借它刷新
+   *   3. 其余情况直接给缓存（带 fetched_at，前端标注数据时间）
    */
   app.get('/api/v1/plan-usage', async (c) => {
     if (deps.registry === undefined) return c.json(ok(null))
-    const live = deps.registry.liveSessionIds()[0]
-    const id = live ?? (await deps.registry.create(homedir()).catch(() => null))
-    if (id === null) return c.json(ok(null))
-    try {
-      const payload = await deps.registry.getUsage(id)
-      if (typeof payload !== 'object' || payload === null) return c.json(ok(null))
+    const trim = (payload: unknown) => {
       const p = payload as Record<string, unknown>
-      return c.json(
-        ok({
-          rate_limits_available: p.rate_limits_available !== false,
-          rate_limits: p.rate_limits ?? null,
-          subscription_type: p.subscription_type ?? null,
-        }),
-      )
-    } finally {
-      if (live === undefined) void deps.registry.get(id)?.stop()
+      return {
+        rate_limits_available: p.rate_limits_available !== false,
+        rate_limits: p.rate_limits ?? null,
+        subscription_type: p.subscription_type ?? null,
+        fetched_at: planCache?.fetched_at ?? Date.now(),
+      }
     }
+    const stale = planCache === null || Date.now() - planCache.fetched_at > PLAN_TTL_MS
+    if (stale) {
+      const live = deps.registry.liveSessionIds()[0]
+      if (live !== undefined) {
+        const payload = await deps.registry.getUsage(live)
+        if (payload !== null) planCache = { payload, fetched_at: Date.now() }
+      } else if (planCache === null) {
+        // 完全没有缓存：走元数据引擎（本来也要为模型列表起它，只此一次）
+        await ensureMeta(deps.registry).catch(() => null)
+      }
+    }
+    if (planCache === null) return c.json(ok(null))
+    return c.json(ok(trim(planCache.payload)))
   })
 
   app.get('/api/v1/usage', async (c) => {

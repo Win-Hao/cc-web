@@ -34,6 +34,9 @@ class FakeEngine extends EventEmitter {
         response: { subtype: 'success', request_id: f.request_id, response },
       })
     if (f.request.subtype === 'initialize') setImmediate(() => respond({}))
+    if (f.request.subtype === 'list_models') setImmediate(() => respond({ models: [] }))
+    if (f.request.subtype === 'get_settings') setImmediate(() => respond({ applied: {} }))
+    if (f.request.subtype === 'get_context_usage') setImmediate(() => respond({ maxTokens: 1000000 }))
     if (f.request.subtype === 'get_usage')
       setImmediate(() =>
         respond({
@@ -62,26 +65,32 @@ function setup() {
   return { app, registry, calls, engines }
 }
 
-describe('GET /api/v1/plan-usage', () => {
-  it('没有活引擎：临时空白引擎拿完即停', async () => {
+describe('GET /api/v1/plan-usage（M34 缓存策略）', () => {
+  it('冷启动：走元数据空白引擎（只此一次），之后命中缓存不再 spawn', async () => {
     const { app, calls, engines } = setup()
     const body = (await (await app.request('/api/v1/plan-usage')).json()) as {
       code: number
-      data: { rate_limits_available: boolean; rate_limits: { five_hour: { utilization: number } } }
+      data: { rate_limits: { five_hour: { utilization: number } }; fetched_at: number }
     }
     expect(body.code).toBe(0)
     expect(body.data.rate_limits.five_hour.utilization).toBe(21)
-    expect(calls[0]?.newSessionCwd).toBeTypeOf('string')
+    expect(body.data.fetched_at).toBeTypeOf('number')
+    expect(calls[0]?.newSessionCwd).toBeTypeOf('string') // 元数据空白引擎
     await new Promise((r) => setTimeout(r, 20))
-    expect(engines[0]!.stopped).toBe(true)
+    expect(engines[0]!.stopped).toBe(true) // 拿完即停
+
+    const again = (await (await app.request('/api/v1/plan-usage')).json()) as { code: number }
+    expect(again.code).toBe(0)
+    expect(calls).toHaveLength(1) // 缓存命中，没有第二次 spawn
   })
 
-  it('有活引擎：直接借用，不再 spawn 也不停它', async () => {
-    const { app, registry, calls, engines } = setup()
-    await registry.ensure('s1')
-    const body = (await (await app.request('/api/v1/plan-usage')).json()) as { code: number }
-    expect(body.code).toBe(0)
-    expect(calls).toHaveLength(1) // 只有 ensure 那一次
-    expect(engines[0]!.stopped).toBe(false)
+  it('缓存未过期时有活引擎也不打扰它', async () => {
+    const { app, registry, engines, calls } = setup()
+    await app.request('/api/v1/plan-usage') // 预热缓存（spawn 1 次）
+    await registry.ensure('s1') // spawn 第 2 次（业务会话）
+    const sentBefore = engines[1]!.sent.length
+    await app.request('/api/v1/plan-usage')
+    expect(engines[1]!.sent.length).toBe(sentBefore) // 没找活引擎发 get_usage
+    expect(calls).toHaveLength(2)
   })
 })

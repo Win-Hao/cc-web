@@ -33,6 +33,8 @@ class FakeEngine extends EventEmitter {
     if (f.request.subtype === 'get_context_usage')
       setImmediate(() => respond({ totalTokens: 201000, maxTokens: 1000000, percentage: 20, categories: [] }))
     if (f.request.subtype === 'list_models') setImmediate(() => respond({ models: [] }))
+    if (f.request.subtype === 'get_usage')
+      setImmediate(() => respond({ session: {}, rate_limits_available: true, rate_limits: {} }))
     if (f.request.subtype === 'get_settings') setImmediate(() => respond({ applied: {} }))
   }
 }

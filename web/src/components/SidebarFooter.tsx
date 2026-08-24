@@ -38,6 +38,7 @@ interface PlanUsage {
   rate_limits_available: boolean
   rate_limits: Record<string, RateWindow> | null
   subscription_type: string | null
+  fetched_at?: number
 }
 
 const WINDOW_KEY: Record<string, 'win_five_hour' | 'win_seven_day' | 'win_seven_day_sonnet' | 'win_seven_day_opus'> = {
@@ -94,7 +95,7 @@ function PlanUsageDialog({ onClose }: { onClose: () => void }) {
         <DialogHeader>
           <DialogTitle>{t('planUsage')}</DialogTitle>
         </DialogHeader>
-        {data === 'loading' && <div className="py-4 text-[13px] text-faint">{t('usageLoadHint')}</div>}
+        {data === 'loading' && <div className="py-4 text-[13px] text-faint">{t('loading')}</div>}
         {data === 'error' && <div className="py-4 text-[13px] text-destructive">{t('loadFailed')}</div>}
         {data !== 'loading' && data !== 'error' && (
           data === null || !data.rate_limits_available || data.rate_limits === null ? (
@@ -113,6 +114,13 @@ function PlanUsageDialog({ onClose }: { onClose: () => void }) {
                 .map(([key, w]) => (
                   <UsageBar key={key} label={WINDOW_KEY[key] !== undefined ? t(WINDOW_KEY[key]!) : key} win={w} />
                 ))}
+              {data.fetched_at !== undefined && (
+                <div className="mt-2 text-xs text-faint">
+                  {t('updatedAt', {
+                    t: new Date(data.fetched_at).toLocaleTimeString(getLang() === 'zh' ? 'zh-CN' : 'en-US', { hour: '2-digit', minute: '2-digit' }),
+                  })}
+                </div>
+              )}
             </div>
           )
         )}
