@@ -577,6 +577,8 @@ export function Chat({
   const atBottomRef = useRef(true)
   /** 当前视口对应的用户消息锚点（M59 右侧锚点轨） */
   const [activeAnchor, setActiveAnchor] = useState<string | null>(null)
+  /** 锚点轨 hover 展开（M60）：横杠转竖条 + 消息预览 */
+  const [railOpen, setRailOpen] = useState(false)
   /** 前插锚点（M51）：点「加载更早」时记录滚动位置，插完还原，不跳底 */
   const prependRef = useRef<{ h: number; top: number } | null>(null)
   const nodes = useMemo(
@@ -764,18 +766,44 @@ export function Chat({
       const anchors = messages.filter((m) => m.role === 'user')
       if (anchors.length < 2) return null
       return (
-        <div className="absolute top-1/2 left-[min(calc(50%+396px),calc(100%-20px))] z-10 flex max-h-[70%] -translate-y-1/2 flex-col items-center gap-[5px] overflow-hidden">
-          {anchors.map((m) => (
-            <button
-              className={cn(
-                'h-[3px] shrink-0 cursor-pointer rounded-full transition-all',
-                m.key === activeAnchor ? 'w-4 bg-primary' : 'w-3 bg-border hover:bg-muted-foreground',
-              )}
-              key={m.key}
-              title={textOfSegments(m.segments).slice(0, 48)}
-              onClick={() => jumpToAnchor(m.key)}
-            />
-          ))}
+        <div
+          className={cn(
+            'absolute top-1/2 left-[min(calc(50%+396px),calc(100%-20px))] z-10 flex max-h-[72%] -translate-y-1/2 flex-col transition-all duration-150',
+            railOpen
+              ? 'w-[272px] -translate-x-[calc(100%-16px)] gap-px overflow-y-auto rounded-xl border bg-background/95 p-1.5 shadow-xl backdrop-blur'
+              : 'items-center gap-[5px] overflow-hidden',
+          )}
+          onMouseEnter={() => setRailOpen(true)}
+          onMouseLeave={() => setRailOpen(false)}
+        >
+          {anchors.map((m) => {
+            const active = m.key === activeAnchor
+            return (
+              <button
+                className={cn(
+                  'flex shrink-0 cursor-pointer items-center transition-all duration-150',
+                  railOpen ? 'w-full gap-2 rounded-md px-1.5 py-[3px] text-left hover:bg-secondary/70' : '',
+                )}
+                key={m.key}
+                title={railOpen ? undefined : textOfSegments(m.segments).slice(0, 48)}
+                onClick={() => jumpToAnchor(m.key)}
+              >
+                <span
+                  className={cn(
+                    'shrink-0 rounded-full transition-all duration-200',
+                    railOpen
+                      ? cn('h-3.5 w-[3px]', active ? 'bg-primary' : 'bg-border')
+                      : cn('h-[3px]', active ? 'w-4 bg-primary' : 'w-3 bg-border hover:bg-muted-foreground'),
+                  )}
+                />
+                {railOpen && (
+                  <span className={cn('min-w-0 flex-1 truncate text-xs', active ? 'text-primary' : 'text-muted-foreground')}>
+                    {textOfSegments(m.segments).replace(/\s+/g, ' ').slice(0, 60)}
+                  </span>
+                )}
+              </button>
+            )
+          })}
         </div>
       )
     })()}
