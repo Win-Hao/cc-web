@@ -288,6 +288,11 @@ export class SessionRegistry {
     await this.control(sessionId, { subtype: 'apply_flag_settings', settings })
   }
 
+  /** get_settings 的完整 payload（effective/sources/applied，M27）。 */
+  async getSettings(sessionId: string): Promise<unknown> {
+    return await this.control(sessionId, { subtype: 'get_settings' })
+  }
+
   /** list_models 的 response payload（含 models 数组），失败抛 ControlRequestError */
   async listModels(sessionId: string): Promise<unknown> {
     return await this.control(sessionId, { subtype: 'list_models' })

@@ -28,11 +28,12 @@ interface Props {
   effort: string | null
   onModel: (value: string) => void
   onEffort: (level: string) => void
+  onModelMenuOpen?: (() => void) | undefined
 }
 
 export function Composer({
   disabled, running, onSend, onInterrupt,
-  permMode, onPermMode, models, modelValue, modelResolved, effort, onModel, onEffort,
+  permMode, onPermMode, models, modelValue, modelResolved, effort, onModel, onEffort, onModelMenuOpen,
 }: Props) {
   const [text, setText] = useState('')
   const taRef = useRef<HTMLTextAreaElement>(null)
@@ -92,6 +93,7 @@ export function Composer({
             effort={effort}
             onModel={onModel}
             onEffort={onEffort}
+            onOpen={onModelMenuOpen}
           />
           {running ? (
             <Button size="icon" variant="destructive" title="中断" onClick={onInterrupt}>

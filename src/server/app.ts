@@ -282,6 +282,16 @@ export function createApp(deps: AppDeps) {
     }
   })
 
+  /** M27：会话设置（applied.effort/model 给前端当默认值）。 */
+  app.get('/api/v1/sessions/:id/settings', async (c) => {
+    if (deps.registry === undefined) return c.json(fail(50001, 'registry not configured'))
+    try {
+      return c.json(ok((await deps.registry.getSettings(c.req.param('id'))) ?? {}))
+    } catch (err) {
+      return c.json(controlFail(err))
+    }
+  })
+
   app.get('/api/v1/sessions/:id/models', async (c) => {
     if (deps.registry === undefined) return c.json(fail(50001, 'registry not configured'))
     try {

@@ -45,6 +45,7 @@ interface Props {
   effort: string | null
   onModel: (value: string) => void
   onEffort: (level: string) => void
+  onModelMenuOpen?: (() => void) | undefined
 }
 
 const menuRow =
@@ -52,7 +53,7 @@ const menuRow =
 
 export function DraftView({
   projects, defaultCwd, onSend,
-  permMode, onPermMode, models, modelValue, effort, onModel, onEffort,
+  permMode, onPermMode, models, modelValue, effort, onModel, onEffort, onModelMenuOpen,
 }: Props) {
   const [cwd, setCwd] = useState<string | null>(defaultCwd ?? projects[0]?.cwd ?? null)
   const [menuOpen, setMenuOpen] = useState(false)
@@ -153,6 +154,7 @@ export function DraftView({
               effort={effort}
               onModel={onModel}
               onEffort={onEffort}
+              onOpen={onModelMenuOpen}
             />
             <Button size="icon" title="发送" disabled={text.trim() === '' || cwd === null} onClick={send}>
               <ArrowUp className="size-4" />

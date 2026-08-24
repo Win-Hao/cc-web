@@ -82,6 +82,36 @@ describe('POST /api/v1/sessions/:id/effort', () => {
     expect((await p).body.code).toBe(0)
   })
 
+  it('GET /settings 透传 get_settings payload（applied.effort 当默认值）', async () => {
+    const engines = new Map<string, FakeEngine>()
+    const registry = new SessionRegistry({
+      hub: new SessionHub(),
+      factory: (id) => {
+        const e = new FakeEngine()
+        engines.set(id, e)
+        return e
+      },
+    })
+    const app = createApp({ projectsRoot: mkdtempSync(join(tmpdir(), 'cc-web-set-')), registry })
+    const p = app.request('/api/v1/sessions/s1/settings')
+    await waitFor(() => expect(engines.get('s1')!.sent).toHaveLength(1))
+    const engine = engines.get('s1')!
+    respondOk(engine, engine.sent[0]!) // initialize
+    await waitFor(() => expect(engine.sent).toHaveLength(2))
+    expect(engine.sent[1]!.request.subtype).toBe('get_settings')
+    engine.emit('message', {
+      type: 'control_response',
+      response: {
+        subtype: 'success',
+        request_id: engine.sent[1]!.request_id,
+        response: { applied: { effort: 'max', model: 'claude-opus-5[1m]' } },
+      },
+    })
+    const body = (await (await p).json()) as { code: number; data: { applied: { effort: string } } }
+    expect(body.code).toBe(0)
+    expect(body.data.applied.effort).toBe('max')
+  })
+
   it('缺 effort → 40001', async () => {
     const registry = new SessionRegistry({ hub: new SessionHub(), factory: () => new FakeEngine() })
     const app = createApp({ projectsRoot: mkdtempSync(join(tmpdir(), 'cc-web-eff-')), registry })

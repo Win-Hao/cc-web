@@ -19,9 +19,11 @@ interface Props {
   effort: string | null
   onModel: (value: string) => void
   onEffort: (level: string) => void
+  /** 面板打开时触发：模型列表为空可借此重拉 */
+  onOpen?: (() => void) | undefined
 }
 
-export function ModelPicker({ models, modelValue, modelResolved, effort, onModel, onEffort }: Props) {
+export function ModelPicker({ models, modelValue, modelResolved, effort, onModel, onEffort, onOpen }: Props) {
   const [open, setOpen] = useState(false)
 
   const current =
@@ -39,7 +41,13 @@ export function ModelPicker({ models, modelValue, modelResolved, effort, onModel
       : []
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover
+      open={open}
+      onOpenChange={(o) => {
+        setOpen(o)
+        if (o) onOpen?.()
+      }}
+    >
       <PopoverTrigger asChild>
         <Button variant="secondary" size="sm" className="rounded-full font-normal text-muted-foreground hover:text-foreground">
           <span className="max-w-[180px] truncate">

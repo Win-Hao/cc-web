@@ -55,6 +55,8 @@ export default function App() {
   const pendingPromptRef = useRef<string | null>(null)
   /** 草稿态里选好的模型/思考/权限：会话创建后、首条 prompt 前按序应用 */
   const pendingSetupRef = useRef<{ model: string | null; effort: string | null; permMode: string | null } | null>(null)
+  /** get_settings 的 applied.effort：effort 的显示默认值（M27） */
+  const defaultEffortRef = useRef<string | null>(null)
   /** 最近一次活跃会话的项目目录 —— 草稿态选择器的默认值 */
   const lastCwdRef = useRef<string | null>(null)
   /** tool_use id → 它渲染在哪条消息的哪个段（tool_result 回填用） */
@@ -174,6 +176,21 @@ export default function App() {
       }
       setModels(opts)
       modelsLoadedRef.current = true
+      // 默认 effort / 当前模型来自 get_settings 的 applied 段（M27 实测）
+      try {
+        const st = await api<{ applied?: { effort?: string | null; model?: string | null } }>(
+          `/api/v1/sessions/${id}/settings`,
+        )
+        const effortDefault = st.applied?.effort
+        const modelDefault = st.applied?.model
+        if (typeof effortDefault === 'string') {
+          defaultEffortRef.current = effortDefault
+          setEffort((prev) => prev ?? effortDefault)
+        }
+        if (typeof modelDefault === 'string') setModelResolved((prev) => prev ?? modelDefault)
+      } catch {
+        // 拿不到默认值就等 init 帧 / 用户手选
+      }
     } catch {
       setModels([])
     }
@@ -214,6 +231,13 @@ export default function App() {
   useEffect(() => {
     if (sessionId !== null || sessions.length === 0 || modelsLoadedRef.current) return
     void loadModels(sessions[0]!.session_id)
+  }, [sessionId, sessions, loadModels])
+
+  /** 面板打开时的兜底：首次加载失败（引擎冷启动超时等）→ 重拉 */
+  const ensureModels = useCallback(() => {
+    if (modelsLoadedRef.current) return
+    const id = sessionId ?? sessions[0]?.session_id
+    if (id !== undefined) void loadModels(id)
   }, [sessionId, sessions, loadModels])
 
   const loadHistory = useCallback(async (id: string) => {
@@ -269,7 +293,7 @@ export default function App() {
     setApproval(null)
     setModelValue(null)
     setModelResolved(null)
-    setEffort(null)
+    setEffort(defaultEffortRef.current)
     setPermMode('default')
     toolLocRef.current = new Map()
 
@@ -629,6 +653,7 @@ export default function App() {
             effort={effort}
             onModel={pickModel}
             onEffort={pickEffort}
+            onModelMenuOpen={ensureModels}
           />
         ) : (
           <>
@@ -646,6 +671,7 @@ export default function App() {
               effort={effort}
               onModel={pickModel}
               onEffort={pickEffort}
+              onModelMenuOpen={ensureModels}
             />
           </>
         )}
