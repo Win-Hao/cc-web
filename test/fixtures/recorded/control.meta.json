@@ -1,0 +1,9 @@
+{
+  "claude_version": "2.1.241 (Claude Code)",
+  "recorded_at": "2026-08-24T07:54:58.353Z",
+  "sent": [
+    "{\"type\":\"control_request\",\"request_id\":\"probe-0\",\"request\":{\"subtype\":\"initialize\"}}",
+    "{\"type\":\"control_request\",\"request_id\":\"probe-1\",\"request\":{\"subtype\":\"list_models\"}}",
+    "{\"type\":\"control_request\",\"request_id\":\"probe-2\",\"request\":{\"subtype\":\"set_model\",\"model\":\"claude-sonnet-5\"}}"
+  ]
+}

@@ -1,0 +1,406 @@
+<!doctype html>
+<!--
+  M11：占位 UI（D2 —— 薄客户端，无逻辑，无测试，将来整个删掉重写）。
+  信息结构：左侧暗色会话栏（按项目分组、组内默认 5 条 +
+  展开更多、搜索过滤）/ 中间对话流 / 顶部状态区。
+  只做三件事：发 HTTP、收 WS、渲染。不引入组件库。
+-->
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<title>cc-web</title>
+<style>
+  * { box-sizing: border-box; margin: 0; }
+  body { font: 14px/1.5 -apple-system, sans-serif; height: 100vh; display: flex; }
+
+  /* ── 侧边栏（暗色、按项目分组）── */
+  #side { width: 260px; flex-shrink: 0; background: #18181b; color: #d4d4d8; display: flex; flex-direction: column; min-height: 0; }
+  #side .brand { padding: 14px 14px 10px; font-weight: 600; color: #fafafa; }
+  #side .search { padding: 0 10px 8px; }
+  #side .search input { width: 100%; background: #27272a; border: 1px solid #3f3f46; color: #e4e4e7; border-radius: 6px; padding: 6px 10px; font: inherit; font-size: 13px; outline: none; }
+  #side .search input::placeholder { color: #71717a; }
+  #side .search input:focus { border-color: #52525b; }
+  #side .label { padding: 6px 14px 2px; font-size: 12px; color: #71717a; }
+  #sessions { flex: 1; overflow-y: auto; padding: 0 6px 12px; }
+  #sessions::-webkit-scrollbar { width: 8px; }
+  #sessions::-webkit-scrollbar-thumb { background: #33333a; border-radius: 4px; }
+  .group-h { display: flex; align-items: center; gap: 6px; padding: 6px 8px; margin-top: 6px; border-radius: 6px; font-size: 13px; font-weight: 600; color: #a1a1aa; cursor: pointer; user-select: none; }
+  .group-h:hover { background: #212124; }
+  .group-h svg { flex-shrink: 0; opacity: .8; }
+  .group-h .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .group-h .n { font-weight: 400; font-size: 11px; color: #52525b; }
+  .s { display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 28px; border-radius: 6px; cursor: pointer; }
+  .s:hover { background: #212124; }
+  .s.active { background: #2f2f33; color: #fafafa; }
+  .s .t { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+  .s .time { flex-shrink: 0; font-size: 11px; color: #71717a; }
+  .more { padding: 5px 8px 5px 28px; font-size: 12px; color: #71717a; cursor: pointer; border-radius: 6px; user-select: none; }
+  .more:hover { background: #212124; color: #a1a1aa; }
+  .side-empty { padding: 20px 14px; font-size: 13px; color: #71717a; }
+
+  /* ── 右侧：状态区 + 对话流 ── */
+  #right { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  header { display: flex; gap: 12px; align-items: center; padding: 8px 12px; border-bottom: 1px solid #ddd; flex-wrap: wrap; }
+  header .state { font-weight: 600; }
+  header .state.running { color: #b60; }
+  header .state.waiting-approval { color: #c00; }
+  header .usage { color: #666; font-size: 12px; }
+  #chat { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  #messages { flex: 1; overflow-y: auto; padding: 12px; }
+  .msg { margin-bottom: 10px; padding: 8px 10px; border-radius: 8px; white-space: pre-wrap; word-break: break-word; }
+  .msg.user { background: #eef4ff; }
+  .msg.assistant { background: #f6f6f6; }
+  .msg .meta { font-size: 11px; color: #999; margin-bottom: 4px; }
+  #composer { display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid #ddd; }
+  #composer textarea { flex: 1; resize: none; padding: 8px; font: inherit; }
+  button { padding: 6px 14px; cursor: pointer; }
+  #approval { position: fixed; inset: 0; background: rgba(0,0,0,.4); display: none; align-items: center; justify-content: center; }
+  #approval .card { background: #fff; padding: 20px; border-radius: 10px; max-width: 560px; width: 90%; }
+  #approval pre { background: #f6f6f6; padding: 8px; overflow: auto; max-height: 200px; margin: 10px 0; }
+  #approval .row { display: flex; gap: 8px; }
+</style>
+</head>
+<body>
+<div id="side">
+  <div class="brand">cc-web</div>
+  <div class="search"><input id="search" type="text" placeholder="搜索会话…" /></div>
+  <div class="label">会话</div>
+  <div id="sessions"><div class="side-empty">加载中…</div></div>
+</div>
+<div id="right">
+  <header>
+    <span id="state" class="state">-</span>
+    <label>模型 <select id="model"></select></label>
+    <label>权限 <select id="perm">
+      <option value="default">default</option>
+      <option value="acceptEdits">acceptEdits</option>
+      <option value="plan">plan</option>
+      <option value="bypassPermissions">bypassPermissions</option>
+    </select></label>
+    <span id="usage" class="usage"></span>
+  </header>
+  <div id="chat">
+    <div id="messages"></div>
+    <div id="composer">
+      <textarea id="input" rows="2" placeholder="发消息… (Enter 发送, Shift+Enter 换行)"></textarea>
+      <button id="send">发送</button>
+      <button id="interrupt">中断</button>
+    </div>
+  </div>
+</div>
+<div id="approval">
+  <div class="card">
+    <h3 id="ap-title">工具审批</h3>
+    <pre id="ap-input"></pre>
+    <div class="row">
+      <button id="ap-allow">允许</button>
+      <button id="ap-deny">拒绝</button>
+    </div>
+  </div>
+</div>
+<script>
+// ── token：URL fragment（#token=），读完存 sessionStorage，不再放进地址栏 ──
+const hashParams = new URLSearchParams(location.hash.slice(1))
+const token = hashParams.get('token') || sessionStorage.getItem('cc-web.token')
+if (token) sessionStorage.setItem('cc-web.token', token)
+let sessionId = new URLSearchParams(location.search).get('session')
+
+const $ = (id) => document.getElementById(id)
+const messagesEl = $('messages')
+let streamBubble = null // 正在流的 assistant 气泡
+let pendingApproval = null
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, {
+    ...opts,
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}`, ...(opts.headers || {}) },
+  })
+  const env = await res.json()
+  if (env.code !== 0) throw new Error(env.msg || `code=${env.code}`)
+  return env.data
+}
+const post = (path, body) => api(path, { method: 'POST', body: JSON.stringify(body ?? {}) })
+
+function addBubble(role, text, meta) {
+  const div = document.createElement('div')
+  div.className = `msg ${role}`
+  div.innerHTML = `<div class="meta">${meta || role}</div><div class="text"></div>`
+  div.querySelector('.text').textContent = text
+  messagesEl.appendChild(div)
+  messagesEl.scrollTop = messagesEl.scrollHeight
+  return div
+}
+
+function textOf(message) {
+  const c = message && message.content
+  if (typeof c === 'string') return c
+  if (Array.isArray(c)) return c.filter((b) => b.type === 'text').map((b) => b.text).join('')
+  return ''
+}
+
+// ── 会话列表：按项目（cwd）分组 ──
+const GROUP_LIMIT = 5 // 每组默认露出的条数，多的折进「展开更多」
+const FOLDER_SVG =
+  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 19V5.5A1.5 1.5 0 0 1 4.5 4h4.1a1.5 1.5 0 0 1 1.2.6L11.3 6H19.5A1.5 1.5 0 0 1 21 7.5v11a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 19z"/></svg>'
+
+let allSessions = []
+const expandedGroups = new Set()  // 点过「展开更多」的组
+const collapsedGroups = new Set() // 点组头收起的组
+
+function relTime(ms) {
+  const m = Math.floor((Date.now() - ms) / 60000)
+  if (m < 1) return '刚刚'
+  if (m < 60) return m + 'm'
+  const h = Math.floor(m / 60)
+  if (h < 24) return h + 'h'
+  const d = Math.floor(h / 24)
+  if (d < 30) return d + 'd'
+  const dt = new Date(ms)
+  return `${dt.getMonth() + 1}/${dt.getDate()}`
+}
+
+// slug 不可逆（server 端注释），项目名从 cwd 取末段；空文件没有 cwd 就退回 slug
+const groupKey = (s) => s.cwd || s.project_slug
+const groupName = (s) => (s.cwd ? s.cwd.split('/').filter(Boolean).pop() || s.cwd : s.project_slug)
+
+async function loadSessions() {
+  const data = await api('/api/v1/sessions')
+  allSessions = data.sessions
+  renderSessions()
+}
+
+function sideEmpty(text) {
+  const div = document.createElement('div')
+  div.className = 'side-empty'
+  div.textContent = text
+  return div
+}
+
+function renderSessions() {
+  const el = $('sessions')
+  el.innerHTML = ''
+  const q = $('search').value.trim().toLowerCase()
+  const list = q
+    ? allSessions.filter(
+        (s) =>
+          (s.first_message || '').toLowerCase().includes(q) ||
+          groupName(s).toLowerCase().includes(q),
+      )
+    : allSessions
+
+  // 列表已按 mtime 倒序，所以组按「各自最新会话」自然有序，组内也是新的在上
+  const groups = new Map()
+  for (const s of list) {
+    const key = groupKey(s)
+    if (!groups.has(key)) groups.set(key, { name: groupName(s), sessions: [] })
+    groups.get(key).sessions.push(s)
+  }
+  if (groups.size === 0) {
+    el.appendChild(sideEmpty(q ? '没有匹配的会话' : '没有会话'))
+    return
+  }
+
+  for (const [key, g] of groups) {
+    const head = document.createElement('div')
+    head.className = 'group-h'
+    head.innerHTML = FOLDER_SVG + '<span class="name"></span><span class="n"></span>'
+    head.querySelector('.name').textContent = g.name
+    head.querySelector('.n').textContent = g.sessions.length
+    head.title = key // 完整 cwd 悬浮可见（重名项目靠它区分）
+    head.onclick = () => {
+      collapsedGroups.has(key) ? collapsedGroups.delete(key) : collapsedGroups.add(key)
+      renderSessions()
+    }
+    el.appendChild(head)
+    if (collapsedGroups.has(key)) continue
+
+    // 搜索时全量显示；当前会话排在折叠线以下的组自动展开（保证高亮可见）
+    const activeIdx = g.sessions.findIndex((s) => s.session_id === sessionId)
+    const showAll = q !== '' || expandedGroups.has(key) || activeIdx >= GROUP_LIMIT
+    const shown = showAll ? g.sessions : g.sessions.slice(0, GROUP_LIMIT)
+    for (const s of shown) {
+      const div = document.createElement('div')
+      div.className = 's' + (s.session_id === sessionId ? ' active' : '')
+      div.innerHTML = '<span class="t"></span><span class="time"></span>'
+      div.querySelector('.t').textContent = s.first_message || s.session_id.slice(0, 8)
+      div.querySelector('.time').textContent = relTime(s.mtime_ms)
+      div.title = s.first_message || s.session_id
+      div.onclick = () => selectSession(s.session_id)
+      el.appendChild(div)
+    }
+    if (g.sessions.length > GROUP_LIMIT && q === '') {
+      const more = document.createElement('div')
+      more.className = 'more'
+      if (!showAll) {
+        more.textContent = `▾ 展开更多 (${g.sessions.length - GROUP_LIMIT})`
+        more.onclick = () => { expandedGroups.add(key); renderSessions() }
+        el.appendChild(more)
+      } else if (expandedGroups.has(key) && activeIdx < GROUP_LIMIT) {
+        more.textContent = '▴ 收起'
+        more.onclick = () => { expandedGroups.delete(key); renderSessions() }
+        el.appendChild(more)
+      }
+    }
+  }
+}
+$('search').oninput = renderSessions
+
+async function selectSession(id) {
+  sessionId = id
+  history.replaceState(null, '', `?session=${id}`)
+  messagesEl.innerHTML = ''
+  streamBubble = null
+  renderSessions() // 高亮立即切换，不等后端
+  connectWs()
+  await loadHistory()
+  // 状态区（模型/用量）后台慢慢加载，不挡切换
+  Promise.allSettled([loadModels(), loadUsage()])
+}
+
+async function loadHistory() {
+  const data = await api(`/api/v1/sessions/${sessionId}/history?limit=100`)
+  for (const m of data.messages) {
+    if (m.text) addBubble(m.role || m.type, m.text, m.model || m.role)
+  }
+}
+
+// ── WebSocket ──
+let ws = null
+function connectWs() {
+  if (ws) ws.close()
+  ws = new WebSocket(`ws://${location.host}/api/v1/ws?session=${sessionId}`, `cc-web.bearer.${token}`)
+  ws.onmessage = (ev) => {
+    const e = JSON.parse(ev.data)
+    if (e.event === 'state') setState(e.data.state)
+    else if (e.event === 'delta') onDelta(e.data)
+    else if (e.event === 'message') onMessage(e.data)
+    else if (e.event === 'approval') onApproval(e.data)
+    else if (e.event === 'approval_resolved') onApprovalResolved(e.data)
+    else if (e.event === 'rate_limit') loadUsage()
+    else if (e.event === 'error') addBubble('assistant', `⚠ ${e.data.message}`, 'error')
+  }
+}
+
+function setState(s) {
+  const el = $('state')
+  el.textContent = s
+  el.className = `state ${s}`
+}
+
+function onDelta(frame) {
+  const ev = frame.event
+  if (ev && ev.type === 'content_block_delta' && ev.delta && ev.delta.type === 'text_delta') {
+    if (!streamBubble) streamBubble = addBubble('assistant', '', 'assistant')
+    const t = streamBubble.querySelector('.text')
+    t.textContent += ev.delta.text
+    messagesEl.scrollTop = messagesEl.scrollHeight
+  }
+}
+
+function onMessage(frame) {
+  if (frame.type === 'assistant' && frame.message) {
+    const text = textOf(frame.message)
+    if (text) {
+      if (streamBubble) { streamBubble.remove(); streamBubble = null }
+      addBubble('assistant', text, frame.message.model || 'assistant')
+    }
+  } else if (frame.type === 'user' && frame.message) {
+    // 别的标签页发的 user 消息也渲染（自己发的已乐观渲染，会重 —— 占位 UI 容忍）
+    const text = textOf(frame.message)
+    if (text) addBubble('user', text, 'user')
+  } else if (frame.type === 'result') {
+    streamBubble = null
+    loadUsage()
+  }
+}
+
+// ── 审批 ──
+function onApproval(data) {
+  pendingApproval = data.requestId
+  $('ap-title').textContent = `工具审批：${data.tool_name ?? ''}`
+  $('ap-input').textContent = JSON.stringify(data.input, null, 2)
+  $('approval').style.display = 'flex'
+}
+function onApprovalResolved(data) {
+  if (data.requestId === pendingApproval) {
+    $('approval').style.display = 'none'
+    pendingApproval = null
+  }
+}
+$('ap-allow').onclick = () =>
+  post(`/api/v1/sessions/${sessionId}/approvals/${pendingApproval}`, { behavior: 'allow' }).catch(alert)
+$('ap-deny').onclick = () =>
+  post(`/api/v1/sessions/${sessionId}/approvals/${pendingApproval}`, {
+    behavior: 'deny',
+    message: 'denied from cc-web',
+  }).catch(alert)
+
+// ── 模型 / 权限 / 用量 ──
+// 模型列表是账户级的，只加载一次 —— 否则每点一个会话就 spawn 一个引擎
+let modelsLoaded = false
+async function loadModels() {
+  if (modelsLoaded) return
+  try {
+    const data = await api(`/api/v1/sessions/${sessionId}/models`)
+    const sel = $('model')
+    sel.innerHTML = ''
+    for (const m of data.models || []) {
+      const opt = document.createElement('option')
+      opt.value = m.value ?? m.id
+      opt.textContent = m.displayName || m.label || m.value
+      sel.appendChild(opt)
+    }
+    modelsLoaded = true
+  } catch {
+    // list_models 失败 → 兜底一个手输框，下拉框不空白（TDD M6）
+    const sel = $('model')
+    sel.innerHTML = '<option value="">(手动输入)</option>'
+  }
+}
+$('model').onchange = () =>
+  $('model').value && post(`/api/v1/sessions/${sessionId}/model`, { model: $('model').value }).catch(alert)
+$('perm').onchange = () =>
+  post(`/api/v1/sessions/${sessionId}/permission-mode`, { mode: $('perm').value }).catch(alert)
+
+async function loadUsage() {
+  const el = $('usage')
+  try {
+    const s = await api(`/api/v1/sessions/${sessionId}/usage`)
+    const parts = []
+    if (s) {
+      if (typeof s.total_cost_usd === 'number') parts.push(`$${s.total_cost_usd.toFixed(4)}`)
+      else if (s.total) parts.push(`${s.total.input_tokens}+${s.total.output_tokens} tok`)
+    }
+    const rl = await api(`/api/v1/usage?session=${sessionId}`)
+    if (rl) {
+      if (rl.five_hour && rl.five_hour.utilization != null) parts.push(`5h ${Math.round(rl.five_hour.utilization)}%`)
+      if (rl.seven_day && rl.seven_day.utilization != null) parts.push(`7d ${Math.round(rl.seven_day.utilization)}%`)
+    }
+    el.textContent = parts.join(' · ') // 拿不到就是空，不显示不报错（D5）
+  } catch {
+    el.textContent = ''
+  }
+}
+
+// ── 发消息 / 中断 ──
+function sendPrompt() {
+  const text = $('input').value.trim()
+  if (!text) return
+  $('input').value = ''
+  addBubble('user', text, 'user')
+  post(`/api/v1/sessions/${sessionId}/prompt`, { text }).catch((e) => addBubble('assistant', `⚠ ${e.message}`, 'error'))
+}
+$('send').onclick = sendPrompt
+$('input').onkeydown = (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendPrompt() }
+}
+$('interrupt').onclick = () => post(`/api/v1/sessions/${sessionId}/interrupt`).catch(alert)
+
+// ── 启动 ──
+;(async () => {
+  await loadSessions()
+  if (sessionId) await selectSession(sessionId)
+})().catch((e) => addBubble('assistant', `⚠ ${e.message}`, 'error'))
+</script>
+</body>
+</html>

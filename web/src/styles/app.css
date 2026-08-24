@@ -1,0 +1,405 @@
+/* ---------------------------------------------------------------------------
+   组件样式 —— 结构按通用做法 的 Sidebar/SessionRow/WorkspaceGroup/ChatPane/
+   Composer（MIT），数值直接取自其 scoped style，选择器名对齐方便对照。
+   --------------------------------------------------------------------------- */
+
+.app { display: flex; height: 100%; }
+
+/* ── 侧栏（Sidebar.vue .side 的对齐契约）──
+   行盒距侧栏边 --sb-inset；文字/图标起点 --sb-pad-x = inset + 8px 行内边距；
+   会话标题起点 --sb-pad-x + --sb-gutter + --sb-gap，正对组名。 */
+.side {
+  width: var(--p-sidebar-w);
+  flex: none;
+  background: var(--color-sidebar-bg);
+  border-right: 1px solid var(--color-line);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  --sb-inset: var(--space-3);
+  --sb-pad-x: var(--space-5);
+  --sb-gutter: 16px;
+  --sb-gap: var(--space-2);
+  --sb-hover: var(--color-hover);
+}
+.ch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: var(--space-3);
+  min-height: calc(26px + 2 * var(--space-3));
+}
+.ch-name {
+  font-size: var(--ui-font-size);
+  font-weight: 500;
+  line-height: 22px;
+  color: var(--color-text);
+}
+
+/* 新建会话：会话行形状的动作按钮（Sidebar.vue .btn-new-chat） */
+.btn-wrap { display: flex; align-items: center; padding: 0 var(--sb-inset); }
+.btn-new-chat {
+  display: flex;
+  align-items: center;
+  gap: var(--sb-gap);
+  flex: 1;
+  min-width: 0;
+  padding: 8px calc(var(--sb-pad-x) - var(--sb-inset));
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  font-size: var(--ui-font-size-sm);
+  line-height: var(--leading-tight);
+  text-align: left;
+}
+.btn-new-chat:hover { background: var(--sb-hover); }
+.btn-new-chat svg { flex: none; color: var(--color-text-muted); }
+
+/* 搜索行：透明底 + hover 洗色，聚焦描 accent 边（Sidebar.vue .search） */
+.search-wrap { padding: 0 var(--sb-inset); }
+.search {
+  display: flex;
+  align-items: center;
+  gap: var(--sb-gap);
+  width: 100%;
+  padding: 8px calc(var(--sb-pad-x) - var(--sb-inset));
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text);
+}
+.search:hover { background: var(--sb-hover); }
+.search:focus-within { background: var(--sb-hover); outline: 2px solid var(--color-accent-bd); outline-offset: -2px; }
+.search-icon { flex: none; color: var(--color-text-muted); display: inline-flex; }
+.search input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  outline: none;
+  font-size: var(--ui-font-size-sm);
+  line-height: var(--leading-tight);
+}
+
+.sessions {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-3) var(--sb-inset);
+  min-height: 0;
+}
+.sessions::-webkit-scrollbar { width: 4px; }
+.side-empty { padding: var(--space-4) var(--space-2); font-size: var(--text-sm); color: var(--color-text-faint); }
+
+/* 组头：安静的分组标签 —— 常规字重、muted 色（WorkspaceGroup.vue .gh） */
+.gh {
+  display: flex;
+  align-items: center;
+  gap: var(--sb-gap);
+  padding: 8px calc(var(--sb-pad-x) - var(--sb-inset));
+  border-radius: var(--radius-sm);
+  color: var(--color-text-muted);
+  user-select: none;
+  cursor: pointer;
+}
+.gh:hover { background: var(--sb-hover); }
+.gh-folder { flex: none; width: var(--sb-gutter); display: inline-flex; justify-content: center; color: var(--color-text-muted); }
+.gh-name {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--ui-font-size-sm);
+  line-height: var(--leading-tight);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gh-n { font-size: var(--text-xs); color: var(--color-text-faint); font-variant-numeric: tabular-nums; }
+
+/* 会话行：inset 圆角 pill，中性选中色（SessionRow.vue .se/.row/.t/.ts） */
+.se {
+  display: flex;
+  align-items: center;
+  gap: var(--sb-gap);
+  padding: 8px calc(var(--sb-pad-x) - var(--sb-inset));
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  cursor: pointer;
+  min-width: 0;
+}
+.se:hover { background: var(--sb-hover); }
+.se.on { background: var(--color-selected); }
+.se-lead { width: var(--sb-gutter); flex: none; display: inline-flex; align-items: center; justify-content: center; }
+.se-t {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--ui-font-size-sm);
+  font-weight: 450;
+  line-height: var(--leading-tight);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.se-ts {
+  flex: none;
+  color: var(--color-text-faint);
+  font-size: var(--text-xs);
+  font-weight: 475;
+  line-height: var(--leading-tight);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* 展开更多/收起：会话行形状的列表控件（WorkspaceGroup.vue .show-more） */
+.show-more {
+  display: flex;
+  align-items: center;
+  gap: var(--sb-gap);
+  width: 100%;
+  padding: 8px calc(var(--sb-pad-x) - var(--sb-inset));
+  border-radius: var(--radius-sm);
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  line-height: var(--leading-tight);
+  text-align: left;
+}
+.show-more:hover { background: var(--sb-hover); }
+.show-more-lead { width: var(--sb-gutter); flex: none; display: inline-flex; justify-content: center; }
+
+/* ── 右侧 ── */
+.main { flex: 1; display: flex; flex-direction: column; min-width: 0; background: var(--color-bg); }
+
+/* 顶栏：50px、底部一条发丝线（ChatHeader 的骨架） */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  min-height: 50px;
+  border-bottom: 1px solid var(--color-line);
+}
+.topbar-title {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--ui-font-size);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.topbar-usage { color: var(--color-text-faint); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
+
+/* 状态徽标：中性 idle / accent 运行中 / warning 待审批 */
+.state-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: var(--radius-full);
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  background: var(--color-surface-sunken);
+  white-space: nowrap;
+}
+.state-pill .dot { width: 7px; height: 7px; border-radius: var(--radius-full); background: var(--color-text-faint); }
+.state-pill.running { color: var(--color-accent); background: var(--color-accent-soft); }
+.state-pill.running .dot { background: var(--color-accent); animation: pulse 1.2s ease-in-out infinite; }
+.state-pill.waiting-approval { color: var(--color-warning); background: var(--color-warning-soft); }
+.state-pill.waiting-approval .dot { background: var(--color-warning); }
+.state-pill.offline { color: var(--color-danger); background: var(--color-danger-soft); }
+.state-pill.offline .dot { background: var(--color-danger); animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: 0.35; } }
+
+/* 原生 select 收进 token：细边、小圆角、surface 底 */
+.sel {
+  appearance: none;
+  padding: 4px 24px 4px 10px;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='3'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") no-repeat right 8px center;
+  font-size: var(--text-xs);
+  color: var(--color-text);
+  cursor: pointer;
+}
+.sel:hover { border-color: var(--color-line-strong); }
+.sel:focus-visible { outline: none; border-color: var(--color-accent); box-shadow: var(--p-focus-ring); }
+
+/* ── 对话流（ChatPane.vue）：白底阅读面，内容列居中 max 760px ── */
+.chat-scroll { flex: 1; overflow-y: auto; min-height: 0; }
+.chat {
+  --chat-turn-gap: 16px;
+  display: flex;
+  flex-direction: column;
+  max-width: var(--p-content-max);
+  margin: 0 auto;
+  padding: var(--space-4) var(--space-4) var(--space-5);
+}
+.chat-empty {
+  margin: auto;
+  padding: 48px 0;
+  color: var(--color-text-faint);
+  font-size: var(--text-sm);
+  text-align: center;
+}
+
+/* 用户消息：右对齐软 accent 气泡，右下角收小（.u-bub） */
+.u-turn { display: flex; flex-direction: column; align-items: flex-end; margin-top: var(--chat-turn-gap); }
+.u-turn:first-child { margin-top: 0; }
+.u-bub {
+  max-width: 78%;
+  background: var(--color-accent-soft);
+  border: 1px solid var(--color-accent-bd);
+  color: var(--color-text);
+  border-radius: var(--radius-xl) var(--radius-xl) var(--radius-sm) var(--radius-xl);
+  padding: 11px 15px;
+  font-size: var(--content-font-size);
+  line-height: var(--leading-normal);
+  box-shadow: var(--shadow-xs);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* 助手消息：左对齐纯文本列，无角色标签（.a-msg） */
+.a-msg { align-self: flex-start; max-width: 94%; margin-top: 10px; }
+.a-msg .msg {
+  font-size: var(--content-font-size);
+  line-height: 1.6;
+  color: var(--color-text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.a-meta { margin-top: 4px; font-size: var(--text-xs); color: var(--color-text-faint); }
+.a-msg.err .msg { color: var(--color-danger); }
+
+/* ── Composer（Composer.vue .composer-card）：大圆角卡片 + 焦点环 ── */
+.dock { padding: 7px var(--space-4) 12px; }
+.composer-card {
+  --send-size: 32px;
+  position: relative;
+  max-width: var(--p-content-max);
+  margin: 0 auto;
+  border: 1px solid var(--color-line);
+  border-radius: calc((var(--send-size) / 2) + var(--space-2) + var(--space-3));
+  background: var(--color-bg);
+  box-shadow: var(--shadow-md);
+  transition: border-color var(--duration-fast), box-shadow var(--duration-fast);
+}
+.composer-card:focus-within {
+  border-color: var(--color-accent);
+  box-shadow: var(--shadow-md), var(--p-focus-ring);
+}
+.composer-card textarea {
+  display: block;
+  width: 100%;
+  border: none;
+  outline: none;
+  background: transparent;
+  padding: 12px calc(var(--send-size) + var(--space-2) * 2 + var(--space-2)) 12px var(--space-4);
+  font-size: var(--content-font-size);
+  line-height: var(--leading-normal);
+  max-height: 160px;
+}
+.send-btn {
+  position: absolute;
+  right: var(--space-2);
+  bottom: var(--space-2);
+  width: var(--send-size);
+  height: var(--send-size);
+  border-radius: var(--radius-full);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-accent);
+  color: var(--color-text-on-accent);
+  transition: background var(--duration-fast), opacity var(--duration-fast);
+}
+.send-btn:hover { background: var(--color-accent-hover); }
+.send-btn:disabled { opacity: 0.35; cursor: default; }
+.send-btn.stop { background: var(--color-danger); }
+
+/* ── 审批弹窗：圆角卡 + 大阴影（dialogs 的形状）── */
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 400;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.4);
+}
+.dialog {
+  width: min(560px, 92vw);
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: var(--space-5);
+  animation: card-in 0.18s var(--ease-out);
+}
+@keyframes card-in { from { opacity: 0; transform: translateY(8px) scale(0.995); } }
+.dialog h3 { font-size: var(--ui-font-size); font-weight: 600; margin-bottom: var(--space-3); }
+.dialog pre {
+  background: var(--color-surface-sunken);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  font: var(--text-xs) / 1.6 var(--font-mono);
+  max-height: 240px;
+  overflow: auto;
+  margin-bottom: var(--space-4);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.dialog-row { display: flex; gap: var(--space-2); justify-content: flex-end; }
+.btn {
+  padding: 6px 16px;
+  border-radius: var(--radius-md);
+  font-size: var(--ui-font-size-sm);
+  border: 1px solid var(--color-line);
+  background: var(--color-bg);
+  color: var(--color-text);
+  transition: background var(--duration-fast), border-color var(--duration-fast);
+}
+.btn:hover { background: var(--color-hover); border-color: var(--color-line-strong); }
+.btn.primary { background: var(--color-accent); border-color: var(--color-accent); color: var(--color-text-on-accent); }
+.btn.primary:hover { background: var(--color-accent-hover); }
+.btn:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
+
+/* ── 新建会话弹窗：项目选择 ── */
+.proj-list {
+  max-height: 260px;
+  overflow-y: auto;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--space-3);
+}
+.proj-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 8px var(--space-3);
+  cursor: pointer;
+  min-width: 0;
+}
+.proj-row:hover { background: var(--color-hover); }
+.proj-row.on { background: var(--color-selected); }
+.proj-folder { flex: none; display: inline-flex; color: var(--color-text-muted); }
+.proj-name { flex: none; font-size: var(--ui-font-size-sm); font-weight: 450; }
+.proj-cwd {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-xs);
+  color: var(--color-text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+}
+.proj-input {
+  width: 100%;
+  padding: 8px var(--space-3);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  font-size: var(--ui-font-size-sm);
+  outline: none;
+  margin-bottom: var(--space-4);
+}
+.proj-input:focus { border-color: var(--color-accent); box-shadow: var(--p-focus-ring); }

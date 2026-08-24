@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.tmp/
+*.log
+
+# 假二进制录到的 stdin，测试产物
+test/.recordings/
+.DS_Store
+.serena/
