@@ -15,7 +15,11 @@ import { Button } from '@/components/ui/button'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator,
+  DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger,
+  MenuCheck,
+} from '@/components/ui/dropdown-menu'
 import { Separator } from '@/components/ui/separator'
 
 const THEME_KEY = {
@@ -23,7 +27,8 @@ const THEME_KEY = {
   light: 'themeLight',
   dark: 'themeDark',
 } as const
-const THEME_ORDER: Theme[] = ['system', 'light', 'dark']
+const THEME_ORDER: Theme[] = ['light', 'dark', 'system']
+const LANGS: Lang[] = ['zh', 'en']
 const LANG_LABEL: Record<Lang, string> = { zh: '简体中文', en: 'English' }
 
 const menuRow =
@@ -198,8 +203,7 @@ export function SidebarFooter() {
   const [showUsage, setShowUsage] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
 
-  const cycleTheme = () => {
-    const next = THEME_ORDER[(THEME_ORDER.indexOf(theme) + 1) % THEME_ORDER.length]!
+  const pickTheme = (next: Theme) => {
     setTheme(next)
     setThemeState(next)
   }
@@ -207,49 +211,57 @@ export function SidebarFooter() {
   return (
     <>
       <div className="border-t border-sidebar-border p-1.5">
-        <Popover open={open} onOpenChange={setOpen}>
-          <PopoverTrigger asChild>
+        <DropdownMenu open={open} onOpenChange={setOpen}>
+          <DropdownMenuTrigger asChild>
             <button className={menuRow}>
               <Settings className="size-4 shrink-0 text-muted-foreground" />
               <span className="min-w-0 flex-1 truncate">{t('settings')}</span>
             </button>
-          </PopoverTrigger>
-          <PopoverContent side="top" align="start" className="w-[232px]">
-            <button
-              className={menuRow}
-              onClick={() => {
-                setOpen(false)
-                setShowUsage(true)
-              }}
-            >
+          </DropdownMenuTrigger>
+          <DropdownMenuContent side="top" align="start" className="w-[232px]">
+            <DropdownMenuItem onSelect={() => setShowUsage(true)}>
               <BarChart3 className="size-4 shrink-0 text-muted-foreground" />
               <span className="flex-1">{t('planUsage')}</span>
               <ChevronRight className="size-3.5 text-faint" />
-            </button>
-            <Separator className="my-1" />
-            <button className={menuRow} onClick={cycleTheme}>
-              <SunMoon className="size-4 shrink-0 text-muted-foreground" />
-              <span className="flex-1">{t('appearance')}</span>
-              <span className="text-xs text-muted-foreground">{t(THEME_KEY[theme])}</span>
-            </button>
-            <button className={menuRow} onClick={() => setLang(lang === 'zh' ? 'en' : 'zh')}>
-              <Globe className="size-4 shrink-0 text-muted-foreground" />
-              <span className="flex-1">{t('language')}</span>
-              <span className="text-xs text-muted-foreground">{LANG_LABEL[lang]}</span>
-            </button>
-            <button
-              className={menuRow}
-              onClick={() => {
-                setOpen(false)
-                setShowSettings(true)
-              }}
-            >
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger>
+                <SunMoon className="size-4 shrink-0 text-muted-foreground" />
+                <span className="flex-1">{t('appearance')}</span>
+                <span className="text-xs text-muted-foreground">{t(THEME_KEY[theme])}</span>
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent>
+                {THEME_ORDER.map((th) => (
+                  <DropdownMenuItem key={th} onSelect={() => pickTheme(th)}>
+                    <span className="flex-1">{t(THEME_KEY[th])}</span>
+                    <MenuCheck on={theme === th} />
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger>
+                <Globe className="size-4 shrink-0 text-muted-foreground" />
+                <span className="flex-1">{t('language')}</span>
+                <span className="text-xs text-muted-foreground">{LANG_LABEL[lang]}</span>
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent>
+                {LANGS.map((l) => (
+                  <DropdownMenuItem key={l} onSelect={() => setLang(l)}>
+                    <span className="flex-1">{LANG_LABEL[l]}</span>
+                    <MenuCheck on={lang === l} />
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+            <DropdownMenuItem onSelect={() => setShowSettings(true)}>
               <Settings className="size-4 shrink-0 text-muted-foreground" />
               <span className="flex-1">{t('settings')}</span>
               <ChevronRight className="size-3.5 text-faint" />
-            </button>
-          </PopoverContent>
-        </Popover>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
       {showUsage && <PlanUsageDialog onClose={() => setShowUsage(false)} />}
       {showSettings && <SettingsDialog onClose={() => setShowSettings(false)} />}
