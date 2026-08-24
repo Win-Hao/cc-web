@@ -34,11 +34,10 @@ function ToolRow({ seg }: { seg: ToolSeg }) {
 interface Props {
   messages: ChatMsg[]
   streamText: string
-  hasSession: boolean
-  sessionId: string | null
+  sessionId: string
 }
 
-export function Chat({ messages, streamText, hasSession, sessionId }: Props) {
+export function Chat({ messages, streamText, sessionId }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -49,9 +48,8 @@ export function Chat({ messages, streamText, hasSession, sessionId }: Props) {
   return (
     <div className="chat-scroll" ref={scrollRef}>
       <div className="chat">
-        {!hasSession && <div className="chat-empty">从左侧选择一个会话开始</div>}
-        {hasSession && messages.length === 0 && streamText === '' && (
-          <div className="chat-empty">没有历史消息</div>
+        {messages.length === 0 && streamText === '' && (
+          <div className="chat-empty">还没有消息 —— 在下方输入开始对话</div>
         )}
         {messages.map((m) =>
           m.role === 'user' ? (
@@ -70,7 +68,7 @@ export function Chat({ messages, streamText, hasSession, sessionId }: Props) {
                 ) : (
                   <div key={i}>
                     <ToolRow seg={seg} />
-                    {seg.agent !== null && sessionId !== null && (
+                    {seg.agent !== null && (
                       <SidechainBlock
                         fetchPath={`/api/v1/sessions/${sessionId}/subagents/${seg.agent.id}`}
                         label={seg.agent.label}
@@ -79,7 +77,7 @@ export function Chat({ messages, streamText, hasSession, sessionId }: Props) {
                   </div>
                 ),
               )}
-              {m.sidechain !== null && sessionId !== null && (
+              {m.sidechain !== null && (
                 <SidechainBlock
                   fetchPath={`/api/v1/sessions/${sessionId}/sidechains/${m.sidechain.uuid}`}
                   label={`子代理 · ${m.sidechain.count} 条`}

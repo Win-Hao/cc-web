@@ -70,3 +70,8 @@ export interface ModelOption {
   value: string
   label: string
 }
+
+export interface ProjectChoice {
+  cwd: string
+  name: string
+}

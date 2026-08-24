@@ -622,3 +622,57 @@
   word-break: break-word;
 }
 .side-note { font-size: var(--text-xs); color: var(--color-text-faint); padding: 4px 0; }
+
+/* ── 草稿态主视图（M21，同类项目 新建会话页的形状）── */
+.draft {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+  overflow-y: auto;
+}
+.draft-hero { text-align: center; margin-bottom: var(--space-5); user-select: none; }
+.draft-mark {
+  font: 700 34px/1.2 var(--font-mono);
+  letter-spacing: -1px;
+  color: var(--color-text);
+}
+.draft-hint { margin-top: var(--space-2); font-size: var(--text-sm); color: var(--color-text-muted); }
+.draft-box { width: min(720px, 94%); }
+.draft-box .composer-card textarea {
+  padding: 14px calc(var(--send-size) + var(--space-2) * 2 + var(--space-2)) 14px var(--space-4);
+  min-height: 72px;
+}
+.draft-picker { position: relative; margin-top: var(--space-2); display: flex; }
+.picker-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: var(--radius-md);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+.picker-btn:hover { background: var(--color-hover); color: var(--color-text); }
+.picker-name { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.picker-chev { font-size: 11px; margin-top: -3px; }
+.picker-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 200;
+  min-width: 340px;
+  max-width: 480px;
+  max-height: 300px;
+  overflow-y: auto;
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: 4px;
+}
+.picker-menu .proj-row { border-radius: var(--radius-sm); }
+.picker-input { margin: 4px; width: calc(100% - 8px); }

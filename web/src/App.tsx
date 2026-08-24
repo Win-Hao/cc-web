@@ -12,15 +12,15 @@ import { groupName, sessionTitle } from './lib/format'
 import { segmentsFromContent, textOfSegments, toolResultsFromContent } from './lib/segments'
 import type { ToolResultInfo } from './lib/segments'
 import type {
-  Approval, ChatMsg, HistoryMessage, HubEvent, ModelOption, SessionState, SessionSummary, ToolSeg,
+  Approval, ChatMsg, HistoryMessage, HubEvent, ModelOption, ProjectChoice, SessionState,
+  SessionSummary, ToolSeg,
 } from './types'
 import { Sidebar } from './components/Sidebar'
 import { Chat } from './components/Chat'
 import { Composer } from './components/Composer'
 import { ApprovalDialog } from './components/ApprovalDialog'
-import { NewSessionDialog } from './components/NewSessionDialog'
+import { DraftView } from './components/DraftView'
 import { QuestionDialog } from './components/QuestionDialog'
-import type { ProjectChoice } from './components/NewSessionDialog'
 
 let keySeq = 0
 const nextKey = () => `m${++keySeq}`
@@ -47,8 +47,11 @@ export default function App() {
   const [models, setModels] = useState<ModelOption[]>([])
   const [permMode, setPermMode] = useState('default')
   const [connected, setConnected] = useState(true)
-  const [showNewDialog, setShowNewDialog] = useState(false)
   const modelsLoadedRef = useRef(false)
+  /** 草稿态发出的首条消息：等会话选中、effect 重置完再乐观渲染 + 发送 */
+  const pendingPromptRef = useRef<string | null>(null)
+  /** 最近一次活跃会话的项目目录 —— 草稿态选择器的默认值 */
+  const lastCwdRef = useRef<string | null>(null)
   /** tool_use id → 它渲染在哪条消息的哪个段（tool_result 回填用） */
   const toolLocRef = useRef(new Map<string, { key: string; si: number }>())
 
@@ -242,7 +245,17 @@ export default function App() {
     setApproval(null)
     toolLocRef.current = new Map()
 
-    void loadHistory(sessionId)
+    const pending = pendingPromptRef.current
+    pendingPromptRef.current = null
+    if (pending !== null) {
+      // 草稿态创建的新会话：没有历史可拉（拉了还会覆盖乐观气泡），直接发首条
+      setMsgs([{ key: nextKey(), role: 'user', segments: [{ kind: 'text', text: pending }], meta: null, sidechain: null }])
+      post(`/api/v1/sessions/${sessionId}/prompt`, { text: pending }).catch((e: Error) =>
+        appendError(e.message),
+      )
+    } else {
+      void loadHistory(sessionId)
+    }
     void loadUsage(sessionId)
     void loadModels(sessionId)
 
@@ -418,7 +431,7 @@ export default function App() {
     [sessionId, approval, appendError],
   )
 
-  /* ── 新建会话 ── */
+  /* ── 草稿态：新建会话 = 回到主视图，首条消息发送时才创建（M21）── */
   const projects = useMemo<ProjectChoice[]>(() => {
     const seen = new Set<string>()
     const out: ProjectChoice[] = []
@@ -430,22 +443,26 @@ export default function App() {
     return out
   }, [sessions])
 
-  const createSession = useCallback(
-    (cwd: string) => {
-      setShowNewDialog(false)
+  const enterDraft = useCallback(() => {
+    setSessionId(null)
+    history.replaceState(null, '', location.pathname)
+  }, [])
+
+  const draftSend = useCallback(
+    (cwd: string, text: string) => {
       post<{ session_id: string; cwd: string }>('/api/v1/sessions', { cwd })
         .then((d) => {
-          // 乐观插入列表（jsonl 落盘前 /sessions 还看不到它）并选中
           setSessions((prev) => [
             {
               session_id: d.session_id,
               project_slug: '',
               cwd: d.cwd,
-              first_message: null,
+              first_message: text,
               mtime_ms: Date.now(),
             },
             ...prev,
           ])
+          pendingPromptRef.current = text // 会话 effect 重置完再渲染 + 发送
           setSessionId(d.session_id)
           history.replaceState(null, '', `?session=${d.session_id}`)
         })
@@ -455,6 +472,7 @@ export default function App() {
   )
 
   const active = sessions.find((s) => s.session_id === sessionId)
+  if (active?.cwd != null) lastCwdRef.current = active.cwd
 
   return (
     <div className="app">
@@ -463,18 +481,21 @@ export default function App() {
         loading={sessionsLoading}
         activeId={sessionId}
         onSelect={selectSession}
-        onNewSession={() => setShowNewDialog(true)}
+        onNewSession={enterDraft}
       />
       <div className="main">
         <header className="topbar">
           <span className="topbar-title">{active !== undefined ? sessionTitle(active) : 'cc-web'}</span>
+          {sessionId !== null && (
           <span className={`state-pill ${connected ? state : 'offline'}`}>
             <span className="dot" />
             {connected ? STATE_LABEL[state] : '已断线，重连中…'}
           </span>
+          )}
+          {sessionId !== null && (
+          <>
           <select
             className="sel"
-            disabled={sessionId === null}
             defaultValue=""
             onChange={(e) => {
               if (e.target.value !== '' && sessionId !== null) {
@@ -491,7 +512,6 @@ export default function App() {
           </select>
           <select
             className="sel"
-            disabled={sessionId === null}
             value={permMode}
             onChange={(e) => {
               const prev = permMode
@@ -512,14 +532,22 @@ export default function App() {
             ))}
           </select>
           {usage !== '' && <span className="topbar-usage">{usage}</span>}
+          </>
+          )}
         </header>
-        <Chat messages={msgs} streamText={stream} hasSession={sessionId !== null} sessionId={sessionId} />
-        <Composer
-          disabled={sessionId === null}
-          running={state !== 'idle'}
-          onSend={sendPrompt}
-          onInterrupt={interrupt}
-        />
+        {sessionId === null ? (
+          <DraftView projects={projects} defaultCwd={lastCwdRef.current} onSend={draftSend} />
+        ) : (
+          <>
+            <Chat messages={msgs} streamText={stream} sessionId={sessionId} />
+            <Composer
+              disabled={false}
+              running={state !== 'idle'}
+              onSend={sendPrompt}
+              onInterrupt={interrupt}
+            />
+          </>
+        )}
       </div>
       {approval !== null &&
         (approval.tool_name === 'AskUserQuestion' ? (
@@ -531,14 +559,7 @@ export default function App() {
         ) : (
           <ApprovalDialog approval={approval} onDecide={decideApproval} />
         ))}
-      {showNewDialog && (
-        <NewSessionDialog
-          projects={projects}
-          defaultCwd={active?.cwd ?? null}
-          onCancel={() => setShowNewDialog(false)}
-          onCreate={createSession}
-        />
-      )}
+
     </div>
   )
 }
