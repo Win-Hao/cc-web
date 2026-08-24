@@ -103,3 +103,37 @@ describe('会话标题（first_message）的元信息过滤', () => {
     expect(s.first_message).toBe('git init')
   })
 })
+
+describe('mtime 缓存（M15）', () => {
+  it('mtime 没变走缓存不重扫；mtime 变了重扫出新内容', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cc-web-cache-'))
+    try {
+      mkdirSync(join(dir, '-Users-x-proj-e'))
+      const f = join(dir, '-Users-x-proj-e', 'eeeeeeee-0000-0000-0000-000000000005.jsonl')
+      const row = (text: string) =>
+        JSON.stringify({
+          type: 'user',
+          uuid: 'u1',
+          parentUuid: null,
+          cwd: '/Users/x/proj-e',
+          message: { role: 'user', content: text },
+        }) + '\n'
+      const T = new Date('2026-08-20T00:00:00Z')
+
+      writeFileSync(f, row('旧标题'))
+      utimesSync(f, T, T)
+      expect((await listSessions(dir))[0]!.first_message).toBe('旧标题')
+
+      // 内容变了但 mtime 钉回原值 → 命中缓存，不重扫（钉住缓存真的生效）
+      writeFileSync(f, row('新标题'))
+      utimesSync(f, T, T)
+      expect((await listSessions(dir))[0]!.first_message).toBe('旧标题')
+
+      // mtime 前进 → 缓存失效，扫出新内容
+      utimesSync(f, new Date(T.getTime() + 5000), new Date(T.getTime() + 5000))
+      expect((await listSessions(dir))[0]!.first_message).toBe('新标题')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
