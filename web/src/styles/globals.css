@@ -257,3 +257,40 @@
   :root[data-theme="dark"] .md .hljs-name, :root[data-theme="dark"] .md .hljs-selector-id, :root[data-theme="dark"] .md .hljs-selector-class { color: #7ee787; }
   :root[data-theme="dark"] .md .hljs-deletion { color: #ffa198; }
   :root[data-theme="dark"] .md .hljs-meta { color: #8b949e; }
+
+/* ── 运行等待态（M47，参考实现的 shimmer/spinner/accordion 语言）── */
+@keyframes cc-shimmer {
+  from { background-position: 100% center; }
+  to { background-position: -100% center; }
+}
+.shimmer-text {
+  background: linear-gradient(120deg, var(--muted-foreground) 38%, var(--foreground) 50%, var(--muted-foreground) 62%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  animation: cc-shimmer 5s linear infinite;
+}
+@keyframes cc-icon-spin { to { transform: rotate(360deg); } }
+.cc-icon-spin { animation: cc-icon-spin 0.9s linear infinite; transform-origin: center; }
+@keyframes cc-dot-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(0.8); }
+}
+.cc-dot-active { animation: cc-dot-pulse 1.2s ease-in-out infinite; }
+/* grid-rows 折叠动画：details 做不了过渡，参考实现用 0fr→1fr */
+.cc-collapsible {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition: grid-template-rows 200ms cubic-bezier(0.4, 0, 0.2, 1), opacity 200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.cc-collapsible.open { grid-template-rows: 1fr; opacity: 1; }
+.cc-collapsible > div { min-height: 0; overflow: hidden; }
+/* 思考正文的上下渐隐遮罩 */
+.cc-thinking-body {
+  max-height: min(40vh, 320px);
+  overflow-y: auto;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 8px, black calc(100% - 16px), transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0%, black 8px, black calc(100% - 16px), transparent 100%);
+}

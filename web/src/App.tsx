@@ -14,7 +14,7 @@ import { humanText, segmentsFromContent, textOfSegments, toolResultsFromContent 
 import type { ToolResultInfo } from './lib/segments'
 import type {
   Approval, ChatMsg, HistoryMessage, HubEvent, ImageRef, ModelOption, ProjectChoice, SessionState,
-  SessionSummary, ToolSeg,
+  SessionSummary, ToolSeg, TurnStatus,
 } from './types'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
@@ -66,9 +66,13 @@ export default function App() {
   const lastCwdRef = useRef<string | null>(null)
   /** tool_use id → 它渲染在哪条消息的哪个段（tool_result 回填用） */
   const toolLocRef = useRef(new Map<string, { key: string; si: number }>())
-  /** 本轮 thinking 流的开始时刻（M46 等待态计秒）；finalize 时算时长 */
+  /** 本轮 thinking 流的开始时刻（M46）；finalize 时算「已深度思考 N 秒」 */
   const thinkingStartRef = useRef<number | null>(null)
-  const [thinkingStart, setThinkingStart] = useState<number | null>(null)
+  /** 回合状态（M47 footer）：state=running 起表，result 帧落统计 */
+  const [turnStart, setTurnStart] = useState<number | null>(null)
+  const turnStartRef = useRef<number | null>(null)
+  const [turnStats, setTurnStats] = useState<TurnStatus['stats']>(null)
+  const [sawContent, setSawContent] = useState(false)
 
   const appendMsg = useCallback((m: Omit<ChatMsg, 'key'>): string => {
     const key = nextKey()
@@ -320,7 +324,10 @@ export default function App() {
     setStream('')
     setStreamThinking('')
     thinkingStartRef.current = null
-    setThinkingStart(null)
+    turnStartRef.current = null
+    setTurnStart(null)
+    setTurnStats(null)
+    setSawContent(false)
     setApproval(null)
     setModelValue(null)
     setModelResolved(null)
@@ -369,20 +376,30 @@ export default function App() {
       const e = JSON.parse(ev.data) as HubEvent
       const data = e.data as Record<string, unknown>
       switch (e.event) {
-        case 'state':
-          setState(data.state as SessionState)
+        case 'state': {
+          const next = data.state as SessionState
+          setState(next)
+          if (next === 'running') {
+            // 同一回合内 running↔waiting-approval 往返不重置起点
+            if (turnStartRef.current === null) turnStartRef.current = Date.now()
+            setTurnStart(turnStartRef.current)
+            setTurnStats(null)
+          } else if (next === 'idle') {
+            turnStartRef.current = null
+            setTurnStart(null)
+          }
           break
+        }
         case 'delta': {
           const evt = data.event as
             | { type?: string; delta?: { type?: string; text?: string; thinking?: string } }
             | undefined
           if (evt?.type === 'content_block_delta' && evt.delta?.type === 'text_delta') {
+            setSawContent(true)
             setStream((s) => s + (evt.delta?.text ?? ''))
           } else if (evt?.type === 'content_block_delta' && evt.delta?.type === 'thinking_delta') {
-            if (thinkingStartRef.current === null) {
-              thinkingStartRef.current = Date.now()
-              setThinkingStart(thinkingStartRef.current)
-            }
+            if (thinkingStartRef.current === null) thinkingStartRef.current = Date.now()
+            setSawContent(true)
             setStreamThinking((s) => s + (evt.delta?.thinking ?? ''))
           }
           break
@@ -422,12 +439,12 @@ export default function App() {
             if (segments.length > 0) {
               setStream('')
               setStreamThinking('')
+              setSawContent(true)
               // 本轮实时思考的时长归到刚 finalize 的 thinking 段（M46）
               if (thinkingStartRef.current !== null && segments.some((sg) => sg.kind === 'thinking')) {
                 const secs = Math.max(1, Math.round((Date.now() - thinkingStartRef.current) / 1000))
                 for (const sg of segments) if (sg.kind === 'thinking') sg.seconds = secs
                 thinkingStartRef.current = null
-                setThinkingStart(null)
               }
               const key = nextKey()
               segments.forEach((seg, si) => {
@@ -466,7 +483,21 @@ export default function App() {
             setStream('')
             setStreamThinking('')
             thinkingStartRef.current = null
-            setThinkingStart(null)
+            setSawContent(false)
+            // result 帧自带本回合统计（duration_ms / usage.output_tokens / total_cost_usd）
+            setTurnStats({
+              durationMs:
+                typeof data.duration_ms === 'number'
+                  ? data.duration_ms
+                  : turnStartRef.current !== null
+                    ? Date.now() - turnStartRef.current
+                    : 0,
+              outputTokens:
+                typeof (data.usage as { output_tokens?: unknown } | undefined)?.output_tokens === 'number'
+                  ? ((data.usage as { output_tokens: number }).output_tokens)
+                  : null,
+              costUsd: typeof data.total_cost_usd === 'number' ? data.total_cost_usd : null,
+            })
             void loadUsage(sessionId)
             void loadContext(sessionId) // context 环跟着每轮更新
             void loadSubagents(sessionId) // 本轮新 spawn 的 subagent 落盘了，补锚点
@@ -735,8 +766,12 @@ export default function App() {
               messages={msgs}
               streamText={stream}
               streamThinking={streamThinking}
-              thinkingStart={thinkingStart}
-              working={state === 'running' && stream === '' && streamThinking === ''}
+              turn={{
+                running: state !== 'idle',
+                preparing: state !== 'idle' && !sawContent,
+                startedAt: turnStart,
+                stats: turnStats,
+              }}
               sessionId={sessionId}
             />
             <Composer

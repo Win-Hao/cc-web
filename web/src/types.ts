@@ -30,6 +30,15 @@ export interface SearchHit {
   mtime_ms: number
 }
 
+/** 当前回合的运行状态（M47 footer）：跑 → 准备中/执行中 + 计时；完 → 已完成 + 统计 */
+export interface TurnStatus {
+  running: boolean
+  /** running 且还没有任何可见内容（首帧前）→ 准备中 shimmer */
+  preparing: boolean
+  startedAt: number | null
+  stats: { durationMs: number; outputTokens: number | null; costUsd: number | null } | null
+}
+
 export type SessionState = 'idle' | 'running' | 'waiting-approval'
 
 export interface HubEvent {

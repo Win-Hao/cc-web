@@ -3,7 +3,9 @@
  * 用户消息 = 右对齐软 accent 气泡；助手消息 = 文本段 + 工具行交错。
  */
 import { useEffect, useRef, useState } from 'react'
-import type { ChatMsg, ImageRef, ToolSeg } from '../types'
+import { ChevronRight, LoaderCircle, Sparkles } from 'lucide-react'
+import type { ChatMsg, ImageRef, ToolSeg, TurnStatus } from '../types'
+import { formatElapsedMs } from '../lib/format'
 import { textOfSegments } from '../lib/segments'
 import { Markdown } from './Markdown'
 import { SidechainBlock } from './SidechainBlock'
@@ -20,19 +22,75 @@ function Thumb({ image }: { image: ImageRef }) {
   )
 }
 
-/** 折叠的思考过程：默认收起，muted 弱化，不抢正文视线 */
-function ThinkingBlock({ text, seconds }: { text: string; seconds?: number | undefined }) {
+/**
+ * 思考块（M47，参考实现移植）：实时和历史同一个组件。
+ * 实时 = spinner 图块 + shimmer「思考中」；结束带时长 =「已深度思考（用时 N 秒）」；
+ * 历史（无时长）=「思考过程」。正文用 grid-rows 折叠动画 + 上下渐隐遮罩。
+ */
+function ThinkingBlock({
+  text, streaming = false, seconds,
+}: { text: string; streaming?: boolean; seconds?: number | undefined }) {
+  const [open, setOpen] = useState(false)
+  const label = streaming
+    ? t('thinkingLive')
+    : seconds !== undefined
+      ? t('thoughtFor', { s: seconds })
+      : t('thoughtProcess')
   return (
-    <details className="group mt-2">
-      <summary className="cursor-pointer list-none text-xs text-faint select-none hover:text-muted-foreground [&::-webkit-details-marker]:hidden">
-        <span className="mr-1 inline-block transition-transform group-open:rotate-90">›</span>
-        {t('thoughtProcess')}
-        {seconds !== undefined && <span className="text-faint"> · {seconds}s</span>}
-      </summary>
-      <div className="mt-1 border-l-2 border-border pl-3 text-[13px] leading-relaxed break-words whitespace-pre-wrap text-muted-foreground italic">
-        {text}
+    <div className="mt-2">
+      <button
+        className="flex cursor-pointer items-center gap-1.5 rounded-md py-0.5 pr-2 pl-0.5 text-[13px] select-none hover:bg-secondary/60"
+        onClick={() => setOpen((o) => !o)}
+      >
+        <span
+          className={cn(
+            'flex size-6 shrink-0 items-center justify-center rounded-md border',
+            streaming ? 'border-primary text-primary' : 'bg-background text-muted-foreground',
+          )}
+        >
+          {streaming ? <LoaderCircle className="cc-icon-spin size-3.5" /> : <Sparkles className="size-3.5" />}
+        </span>
+        <span className={cn('font-medium text-muted-foreground', streaming && 'shimmer-text')}>{label}</span>
+        <ChevronRight className={cn('size-3 text-faint transition-transform duration-150', open && 'rotate-90')} />
+      </button>
+      <div className={cn('cc-collapsible', open && 'open')}>
+        <div>
+          <div className="cc-thinking-body pt-1 pb-2 pl-8 text-[13px] leading-[1.7] break-words whitespace-pre-wrap text-muted-foreground">
+            {text}
+          </div>
+        </div>
       </div>
-    </details>
+    </div>
+  )
+}
+
+/**
+ * 回合状态 footer（M47，参考实现移植）：绿点脉冲 + 状态词 + 实时计时；
+ * 结束后落成「已完成 · 12.3s · 843 输出 · $0.0123」。只挂在当前回合下。
+ */
+function TurnFooter({ turn }: { turn: TurnStatus }) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!turn.running) return
+    const id = window.setInterval(() => setNow(Date.now()), 200)
+    return () => window.clearInterval(id)
+  }, [turn.running])
+  if (!turn.running && turn.stats === null) return null
+  const elapsed = turn.running
+    ? turn.startedAt !== null ? formatElapsedMs(Math.max(0, now - turn.startedAt)) : ''
+    : turn.stats !== null ? formatElapsedMs(turn.stats.durationMs) : ''
+  const label = turn.running
+    ? turn.preparing ? t('statusPreparing') : t('workingLabel')
+    : t('doneLabel')
+  const cost =
+    turn.stats?.costUsd != null && turn.stats.costUsd > 0 ? ` · $${turn.stats.costUsd.toFixed(4)}` : ''
+  const out = turn.stats?.outputTokens != null ? ` · ${t('outTokens', { n: turn.stats.outputTokens })}` : ''
+  return (
+    <div className="mt-2 flex items-center gap-1.5 self-start text-[11px] text-faint">
+      <span className={cn('size-[5px] shrink-0 rounded-full', turn.running ? 'cc-dot-active bg-success' : 'bg-faint')} />
+      <span className={cn(turn.running && turn.preparing && 'shimmer-text')}>{label}</span>
+      <span className="tabular-nums">{elapsed}{out}{cost}</span>
+    </div>
   )
 }
 
@@ -89,47 +147,23 @@ function ToolRow({ seg }: { seg: ToolSeg }) {
   )
 }
 
-/** 实时思考行（M46）：折叠 + 每秒跳的计时，点开看流式思考文本 */
-function LiveThinking({ text, startTs }: { text: string; startTs: number | null }) {
-  const [now, setNow] = useState(() => Date.now())
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 1000)
-    return () => clearInterval(timer)
-  }, [])
-  const secs = startTs !== null ? Math.max(1, Math.round((now - startTs) / 1000)) : null
-  return (
-    <details className="group">
-      <summary className="flex cursor-pointer list-none items-center gap-1.5 text-xs text-muted-foreground select-none [&::-webkit-details-marker]:hidden">
-        <span className="size-[7px] shrink-0 animate-pulse rounded-full bg-faint" />
-        {t('thinkingLive')}
-        {secs !== null && <span className="text-faint">· {secs}s</span>}
-        <span className="inline-block text-faint transition-transform group-open:rotate-90">›</span>
-      </summary>
-      <div className="mt-1.5 border-l-2 border-border pl-3 text-[13px] leading-relaxed break-words whitespace-pre-wrap text-muted-foreground italic">
-        {text}
-      </div>
-    </details>
-  )
-}
 
 interface Props {
   messages: ChatMsg[]
   streamText: string
   streamThinking: string
-  thinkingStart: number | null
-  /** 引擎在跑但没有任何可见流（工具执行间隙等）→ 底部「工作中…」 */
-  working: boolean
+  turn: TurnStatus
   sessionId: string
 }
 
-export function Chat({ messages, streamText, streamThinking, thinkingStart, working, sessionId }: Props) {
+export function Chat({ messages, streamText, streamThinking, turn, sessionId }: Props) {
   useLang()
   const scrollRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     const el = scrollRef.current
     if (el !== null) el.scrollTop = el.scrollHeight
-  }, [messages, streamText, streamThinking, working])
+  }, [messages, streamText, streamThinking, turn.running])
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto" ref={scrollRef}>
@@ -194,11 +228,7 @@ export function Chat({ messages, streamText, streamThinking, thinkingStart, work
         )}
         {(streamText !== '' || streamThinking !== '') && (
           <div className="mt-2.5 max-w-[94%] self-start">
-            {streamThinking !== '' && (
-              <div className="mb-2">
-                <LiveThinking startTs={thinkingStart} text={streamThinking} />
-              </div>
-            )}
+            {streamThinking !== '' && <ThinkingBlock streaming text={streamThinking} />}
             {streamText !== '' && (
               <div className="text-[15px] leading-relaxed break-words">
                 <Markdown text={streamText} />
@@ -206,15 +236,7 @@ export function Chat({ messages, streamText, streamThinking, thinkingStart, work
             )}
           </div>
         )}
-        {working && (
-          <div className="mt-3 flex items-center gap-2 self-start text-[13px] text-muted-foreground">
-            <span className="relative flex size-2.5">
-              <span className="absolute inline-flex size-full animate-ping rounded-full bg-primary opacity-40" />
-              <span className="relative inline-flex size-2.5 rounded-full bg-primary/70" />
-            </span>
-            {t('working')}
-          </div>
-        )}
+        <TurnFooter turn={turn} />
       </div>
     </div>
   )

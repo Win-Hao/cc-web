@@ -24,3 +24,12 @@ export function groupName(s: SessionSummary): string {
 
 export const sessionTitle = (s: SessionSummary): string =>
   s.first_message ?? s.session_id.slice(0, 8)
+
+/** 运行耗时：<60s 一位小数（<10s）或整数；≥60s → "1m 04s"（M47） */
+export function formatElapsedMs(ms: number): string {
+  const s = ms / 1000
+  if (s < 60) return `${s.toFixed(s < 10 ? 1 : 0)}s`
+  const m = Math.floor(s / 60)
+  const rem = Math.floor(s - m * 60)
+  return `${m}m ${String(rem).padStart(2, '0')}s`
+}
