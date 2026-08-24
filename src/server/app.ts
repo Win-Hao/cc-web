@@ -9,7 +9,8 @@
 import { Hono } from 'hono'
 import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
-import { stat } from 'node:fs/promises'
+import { readdir, stat } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { expandHome } from '#/sessions/slug.js'
@@ -83,8 +84,30 @@ export function createApp(deps: AppDeps) {
   })
 
   app.get('/api/v1/meta', (c) =>
-    c.json(ok({ name: 'cc-web', version: '0.0.0' })),
+    // home：前端把绝对路径缩写成 ~/…（M22 目录选择器）
+    c.json(ok({ name: 'cc-web', version: '0.0.0', home: homedir() })),
   )
+
+  /**
+   * M22：目录浏览（草稿态「选择文件夹…」的下钻）。只列目录名，
+   * 隐藏目录不出，读不了（权限/不存在/不是目录）→ 信封错误码。
+   */
+  app.get('/api/v1/fs/dirs', async (c) => {
+    const raw = c.req.query('path') ?? '~'
+    const path = expandHome(raw.trim() === '' ? '~' : raw.trim())
+    if (!path.startsWith('/')) return c.json(fail(40006, 'path must be absolute or ~'))
+    try {
+      const entries = await readdir(path, { withFileTypes: true })
+      const dirs = entries
+        .filter((e) => e.isDirectory() && !e.name.startsWith('.'))
+        .map((e) => e.name)
+        .sort((a, b) => a.localeCompare(b))
+        .slice(0, 300)
+      return c.json(ok({ path, dirs }))
+    } catch {
+      return c.json(fail(40005, `cannot read directory: ${path}`))
+    }
+  })
 
   app.get('/api/v1/sessions', async (c) => {
     const sessions = await listSessions(deps.projectsRoot)
