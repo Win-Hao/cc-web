@@ -7,11 +7,14 @@
  * 后者是 CC 控制协议里审批请求的 id，撞名必混。
  */
 import { Hono } from 'hono'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { readdir, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { expandHome } from '#/sessions/slug.js'
 import { listSessions } from '#/sessions/list.js'
@@ -273,6 +276,33 @@ export function createApp(deps: AppDeps) {
       return c.json(ok({ session_id: newId }))
     } catch (err) {
       return c.json(fail(50003, err instanceof Error ? err.message : 'fork failed'))
+    }
+  })
+
+  /**
+   * M57：导出完整会话数据 —— tar.gz 打包 projects 里属于该会话的全部文件
+   * （主 jsonl + <id>/ 目录里的 subagents 转写等）。CC 没有可编程的导出
+   * 通道（控制协议无 export subtype；TUI /export 是交互专用），所以打包
+   * 落盘数据是唯一完整的导出。
+   */
+  app.get('/api/v1/sessions/:id/archive', async (c) => {
+    const id = c.req.param('id')
+    const file = await findSessionFile(deps.projectsRoot, id)
+    if (file === null) return c.json(fail(40401, 'session not found'))
+    const slugDir = dirname(file)
+    const entries = [basename(file)]
+    if (existsSync(join(slugDir, id))) entries.push(id)
+    const tmp = join(tmpdir(), `cc-web-archive-${randomUUID()}.tar.gz`)
+    try {
+      await promisify(execFile)('tar', ['-czf', tmp, '-C', slugDir, ...entries])
+      const buf = readFileSync(tmp)
+      c.header('content-type', 'application/gzip')
+      c.header('content-disposition', `attachment; filename="${id}.tar.gz"`)
+      return c.body(buf)
+    } catch (err) {
+      return c.json(fail(50004, err instanceof Error ? err.message : 'archive failed'))
+    } finally {
+      rmSync(tmp, { force: true })
     }
   })
 

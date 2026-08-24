@@ -93,6 +93,32 @@ describe('会话重命名（M55）', () => {
   })
 })
 
+describe('GET /sessions/:id/archive（M57：完整会话数据打包）', () => {
+  it('tar.gz 里有主 jsonl 和 subagents 目录；不存在的会话 40401', async () => {
+    const root = tmp()
+    const slug = join(root, '-tmp-arch')
+    mkdirSync(join(slug, 'e1', 'subagents'), { recursive: true })
+    writeFileSync(join(slug, 'e1.jsonl'), JSON.stringify({ type: 'user', uuid: 'u1', parentUuid: null, message: { role: 'user', content: 'hi' } }) + '\n')
+    writeFileSync(join(slug, 'e1', 'subagents', 'agent-x.jsonl'), '{}\n')
+    const app = createApp({ projectsRoot: root, namesPath: join(root, 'n.json') })
+
+    const res = await app.request('/api/v1/sessions/e1/archive')
+    expect(res.headers.get('content-type')).toContain('gzip')
+    const buf = Buffer.from(await res.arrayBuffer())
+    expect(buf[0]).toBe(0x1f) // gzip magic
+    expect(buf[1]).toBe(0x8b)
+    const out = join(root, 'out.tar.gz')
+    writeFileSync(out, buf)
+    const { execFileSync } = await import('node:child_process')
+    const listing = execFileSync('tar', ['-tzf', out]).toString()
+    expect(listing).toContain('e1.jsonl')
+    expect(listing).toContain('subagents/agent-x.jsonl')
+
+    const missing = await app.request('/api/v1/sessions/zzzz/archive')
+    expect(((await missing.json()) as { code: number }).code).toBe(40401)
+  })
+})
+
 describe('GET /sessions/:id/export（M55）', () => {
   it('导出 Markdown：分角色、含工具注记；不存在的会话报 40401', async () => {
     const app = createApp({ projectsRoot: FIXTURES, namesPath: join(tmp(), 'n.json') })

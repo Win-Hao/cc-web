@@ -5,7 +5,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Archive, ArchiveRestore, ChevronDown, ChevronUp, Copy, Download, Folder, GitFork,
+  Archive, ArchiveRestore, ChevronDown, ChevronUp, Copy, Download, FileText, Folder, GitFork,
   LoaderCircle, MessageSquareText, Pencil, Pin, PinOff, Plus, Search,
 } from 'lucide-react'
 import type { SearchHit, SessionSummary } from '../types'
@@ -120,18 +120,22 @@ export function Sidebar({ sessions, loading, activeId, onSelect, onNewSession, o
     })
   }
 
-  const exportSession = async (s: SessionSummary) => {
-    const res = await fetch(`/api/v1/sessions/${s.session_id}/export`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
+  const download = async (path: string, filename: string) => {
+    const res = await fetch(path, { headers: { Authorization: `Bearer ${token}` } })
     if (!res.ok) return
     const blob = await res.blob()
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
-    a.download = `${sessionTitle(s).slice(0, 40) || s.session_id}.md`
+    a.download = filename
     a.click()
     URL.revokeObjectURL(a.href)
   }
+
+  /** 完整数据（M57）：主 jsonl + subagents 目录的 tar.gz */
+  const exportSession = (s: SessionSummary) =>
+    download(`/api/v1/sessions/${s.session_id}/archive`, `${s.session_id}.tar.gz`)
+  const exportMarkdown = (s: SessionSummary) =>
+    download(`/api/v1/sessions/${s.session_id}/export`, `${sessionTitle(s).slice(0, 40) || s.session_id}.md`)
 
   const submitRename = async () => {
     if (renaming === null) return
@@ -381,6 +385,10 @@ export function Sidebar({ sessions, loading, activeId, onSelect, onNewSession, o
               {
                 icon: <Download className="size-3.5" />, label: t('ctxExport'),
                 run: () => void exportSession(menu.s),
+              },
+              {
+                icon: <FileText className="size-3.5" />, label: t('ctxExportMd'),
+                run: () => void exportMarkdown(menu.s),
               },
               pinned.has(menu.s.session_id)
                 ? { icon: <PinOff className="size-3.5" />, label: t('ctxUnpin'), run: () => togglePin(menu.s.session_id) }
