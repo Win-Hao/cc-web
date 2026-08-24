@@ -406,6 +406,22 @@ export function createApp(deps: AppDeps) {
     )
   })
 
+  /** M30：context 窗口用量。只查活引擎 —— 绝不为看环 spawn 进程。 */
+  app.get('/api/v1/sessions/:id/context', async (c) => {
+    const id = c.req.param('id')
+    if (deps.registry?.get(id) === undefined) return c.json(ok(null))
+    const payload = await deps.registry.getContextUsage(id)
+    if (typeof payload !== 'object' || payload === null) return c.json(ok(null))
+    const p = payload as Record<string, unknown>
+    return c.json(
+      ok({
+        total_tokens: p.totalTokens ?? null,
+        max_tokens: p.maxTokens ?? null,
+        percentage: p.percentage ?? null,
+      }),
+    )
+  })
+
   app.get('/api/v1/usage', async (c) => {
     // 订阅额度是账户级的，但 get_usage 要走某个会话的引擎 ——
     // 调用方用 ?session=<id> 指定；没有就没法拿，回 null（不显示，不报错）

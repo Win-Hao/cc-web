@@ -10,6 +10,8 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
+import { ContextRing } from './ContextRing'
+import type { ContextInfo } from './ContextRing'
 import { ModelPicker } from './ModelPicker'
 import type { ModelOption } from '../types'
 
@@ -29,11 +31,13 @@ interface Props {
   onModel: (value: string) => void
   onEffort: (level: string) => void
   onModelMenuOpen?: (() => void) | undefined
+  context: ContextInfo | null
 }
 
 export function Composer({
   disabled, running, onSend, onInterrupt,
   permMode, onPermMode, models, modelValue, modelResolved, effort, onModel, onEffort, onModelMenuOpen,
+  context,
 }: Props) {
   const [text, setText] = useState('')
   const taRef = useRef<HTMLTextAreaElement>(null)
@@ -86,6 +90,7 @@ export function Composer({
             </SelectContent>
           </Select>
           <div className="flex-1" />
+          {context !== null && context.max > 0 && <ContextRing info={context} />}
           <ModelPicker
             models={models}
             modelValue={modelValue}

@@ -20,6 +20,7 @@ import { cn } from '@/lib/utils'
 import { Sidebar } from './components/Sidebar'
 import { Chat } from './components/Chat'
 import { Composer } from './components/Composer'
+import type { ContextInfo } from './components/ContextRing'
 import { ApprovalDialog } from './components/ApprovalDialog'
 import { DraftView } from './components/DraftView'
 import { QuestionDialog } from './components/QuestionDialog'
@@ -49,6 +50,7 @@ export default function App() {
   const [modelValue, setModelValue] = useState<string | null>(null)
   const [modelResolved, setModelResolved] = useState<string | null>(null)
   const [effort, setEffort] = useState<string | null>(null)
+  const [contextInfo, setContextInfo] = useState<ContextInfo | null>(null)
   const [connected, setConnected] = useState(true)
   const modelsLoadedRef = useRef(false)
   /** 草稿态发出的首条消息：等会话选中、effect 重置完再乐观渲染 + 发送 */
@@ -124,6 +126,22 @@ export default function App() {
       .catch((e: Error) => appendError(e.message))
       .finally(() => setSessionsLoading(false))
   }, [refreshSessions, appendError])
+
+  /** context 窗口用量（M30）：引擎活着才有，拿不到就不显示 */
+  const loadContext = useCallback(async (id: string) => {
+    try {
+      const d = await api<{ total_tokens: number; max_tokens: number; percentage: number } | null>(
+        `/api/v1/sessions/${id}/context`,
+      )
+      setContextInfo(
+        d !== null && typeof d.max_tokens === 'number' && d.max_tokens > 0
+          ? { total: d.total_tokens, max: d.max_tokens, percentage: d.percentage }
+          : null,
+      )
+    } catch {
+      setContextInfo(null)
+    }
+  }, [])
 
   /* ── 用量（拿不到就不显示，D5）── */
   const loadUsage = useCallback(async (id: string) => {
@@ -318,6 +336,8 @@ export default function App() {
     } else {
       void loadHistory(sessionId)
     }
+    setContextInfo(null)
+    void loadContext(sessionId)
     void loadUsage(sessionId)
     void loadModels()
 
@@ -402,6 +422,7 @@ export default function App() {
           } else if (data.type === 'result') {
             setStream('')
             void loadUsage(sessionId)
+            void loadContext(sessionId) // context 环跟着每轮更新
             void loadSubagents(sessionId) // 本轮新 spawn 的 subagent 落盘了，补锚点
             refreshSessions().catch(() => {}) // 标题/排序跟随（新会话从 uuid 变真标题）
           }
@@ -456,7 +477,7 @@ export default function App() {
       if (retry !== null) clearTimeout(retry)
       ws?.close()
     }
-  }, [sessionId, appendError, loadHistory, loadUsage, loadModels, loadSubagents, patchToolResults, refreshSessions])
+  }, [sessionId, appendError, loadHistory, loadUsage, loadModels, loadSubagents, loadContext, patchToolResults, refreshSessions])
 
   const selectSession = useCallback((id: string) => {
     setSessionId(id)
@@ -666,6 +687,7 @@ export default function App() {
               onModel={pickModel}
               onEffort={pickEffort}
               onModelMenuOpen={ensureModels}
+              context={contextInfo}
             />
           </>
         )}

@@ -19,6 +19,9 @@
  *   --hold    吐完之后不退出，挂着直到被杀 —— 测 stop()/退出钩子用
  *   --echo-result  每收到一行 stdin 就回一帧 {"type":"result","subtype":"success"}
  *             —— 模拟「每轮对话以 result 收尾」，测状态机/刷新逻辑用
+ *   --auto-control  对收到的 control_request 回内置的 success 应答
+ *             （initialize/list_models/get_settings/get_context_usage…），
+ *             UI 全链路可以完全离线验证
  *   --spawn-sleeper  启动时再 spawn 一个不死孙进程（同进程组），并先吐一帧
  *             {"type":"fake-claude.sleeper","pid":N} —— 测按进程组杀（R1）用
  */
@@ -41,6 +44,7 @@ const exitCode = Number(arg('exit', '0'))
 const hold = has('hold')
 const spawnSleeper = has('spawn-sleeper')
 const echoResult = has('echo-result')
+const autoControl = has('auto-control')
 
 // 收 stdin 并落盘。注意即使不 record 也要 resume()，
 // 否则 stdin 缓冲区满了会把父进程的写阻塞住。
@@ -53,9 +57,45 @@ if (recordPath !== undefined) {
   process.stdin.on('data', () => {})
 }
 
-if (echoResult) {
-  process.stdin.on('data', () => {
-    process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success' }) + '\n')
+// 内置控制应答表（--auto-control）
+const CANNED = {
+  initialize: {},
+  list_models: {
+    models: [
+      { value: 'default', displayName: 'Default (recommended)', description: 'Opus 5 with 1M context', resolvedModel: 'claude-opus-5[1m]', supportsEffort: true, supportedEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max'] },
+      { value: 'haiku', displayName: 'Haiku', description: 'Fastest', resolvedModel: 'claude-haiku-4-5', supportsEffort: false, supportedEffortLevels: [] },
+    ],
+  },
+  get_settings: { applied: { effort: 'max', model: 'claude-opus-5[1m]' } },
+  get_context_usage: { totalTokens: 201000, maxTokens: 1000000, percentage: 20.1, categories: [] },
+  get_usage: { session: { total_cost_usd: 0.12, model_usage: {} }, rate_limits_available: false, rate_limits: null },
+}
+
+if (echoResult || autoControl) {
+  let inBuf = ''
+  process.stdin.on('data', (c) => {
+    if (!autoControl) {
+      if (echoResult) process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success' }) + '\n')
+      return
+    }
+    inBuf += String(c)
+    let i
+    while ((i = inBuf.indexOf('\n')) !== -1) {
+      const line = inBuf.slice(0, i)
+      inBuf = inBuf.slice(i + 1)
+      if (line.trim() === '') continue
+      let frame
+      try { frame = JSON.parse(line) } catch { continue }
+      if (frame.type === 'control_request') {
+        const canned = CANNED[frame.request?.subtype] ?? {}
+        process.stdout.write(JSON.stringify({
+          type: 'control_response',
+          response: { subtype: 'success', request_id: frame.request_id, response: canned },
+        }) + '\n')
+      } else if (frame.type === 'user' && echoResult) {
+        process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success' }) + '\n')
+      }
+    }
   })
 }
 

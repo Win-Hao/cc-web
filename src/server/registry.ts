@@ -312,6 +312,19 @@ export class SessionRegistry {
     }
   }
 
+  /**
+   * get_context_usage 的 payload（totalTokens/maxTokens/percentage…，M30）。
+   * 拿不到 → null，不抛 —— context 环是锦上添花，绝不能挂（D5 同款）。
+   */
+  async getContextUsage(sessionId: string): Promise<unknown | null> {
+    try {
+      return await this.control(sessionId, { subtype: 'get_context_usage' })
+    } catch (err) {
+      if (err instanceof ControlRequestError) return null
+      throw err
+    }
+  }
+
   private async ensureInitialized(sessionId: string, engine: EngineLike): Promise<void> {
     if (this.initialized.has(sessionId)) return
     // 并发调用共享同一次握手
