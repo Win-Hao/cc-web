@@ -78,6 +78,8 @@ export interface ToolSeg {
   /** 展开看的完整入参（JSON pretty，已截断） */
   detail: string
   status: 'pending' | 'ok' | 'error'
+  /** 原始入参（M48 工具卡片按 family 取字段：file_path/pattern/url…） */
+  input: unknown
   result: string | null
   /** 工具返回的图片（截图类工具，M42） */
   images: ImageRef[]

@@ -294,3 +294,17 @@
   -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 8px, black calc(100% - 16px), transparent 100%);
   mask-image: linear-gradient(to bottom, transparent 0%, black 8px, black calc(100% - 16px), transparent 100%);
 }
+
+/* 流式文本光标（M48）：最后一个元素尾部的闪烁块 */
+@keyframes cc-caret-blink { 0%, 50% { opacity: 1; } 50.01%, 100% { opacity: 0; } }
+.cc-stream-cursor > *:last-child::after {
+  content: "";
+  display: inline-block;
+  width: 0.5em;
+  height: 1em;
+  margin-left: 1px;
+  vertical-align: text-bottom;
+  background: var(--primary);
+  border-radius: 1px;
+  animation: cc-caret-blink 1s steps(2, start) infinite;
+}

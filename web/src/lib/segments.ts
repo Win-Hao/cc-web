@@ -48,6 +48,7 @@ export function segmentsFromContent(content: unknown): Segment[] {
         name: blk.name,
         summary: toolSummary(blk.name, blk.input),
         detail: toolDetail(blk.input),
+        input: blk.input,
         status: 'pending',
         result: null,
         images: [],

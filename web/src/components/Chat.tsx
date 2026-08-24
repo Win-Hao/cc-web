@@ -2,8 +2,8 @@
  * 对话流：白底阅读面，内容列居中 max-w-[760px]。
  * 用户消息 = 右对齐软 accent 气泡；助手消息 = 文本段 + 工具行交错。
  */
-import { useEffect, useRef, useState } from 'react'
-import { ChevronRight, LoaderCircle, Sparkles } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Check, ChevronRight, LoaderCircle, Sparkles, X } from 'lucide-react'
 import type { ChatMsg, ImageRef, ToolSeg, TurnStatus } from '../types'
 import { formatElapsedMs } from '../lib/format'
 import { textOfSegments } from '../lib/segments'
@@ -94,56 +94,231 @@ function TurnFooter({ turn }: { turn: TurnStatus }) {
   )
 }
 
-function ToolRow({ seg }: { seg: ToolSeg }) {
+/* ── 工具卡片（M48，参考实现移植）────────────────────────────
+ * 每个工具族一个动词标题 + 关键元信息；24px 状态块 spinner/✓/✕；
+ * 运行中标题 shimmer；连续同族调用折叠成组卡「搜索 ×3, 完成」。 */
+
+type ToolFamily = 'run' | 'read' | 'edit' | 'write' | 'search' | 'fetch' | 'todo' | 'other'
+
+function toolFamily(name: string): ToolFamily {
+  if (name === 'Bash') return 'run'
+  if (name === 'Read') return 'read'
+  if (name === 'Edit') return 'edit'
+  if (name === 'Write' || name === 'NotebookEdit') return 'write'
+  if (name === 'Grep' || name === 'Glob' || name === 'WebSearch') return 'search'
+  if (name === 'WebFetch') return 'fetch'
+  if (name === 'TodoWrite') return 'todo'
+  return 'other'
+}
+
+const FAMILY_KEY: Record<Exclude<ToolFamily, 'other'>, 'toolRun' | 'toolRead' | 'toolEdit' | 'toolWrite' | 'toolSearch' | 'toolFetch' | 'toolTodos'> = {
+  run: 'toolRun', read: 'toolRead', edit: 'toolEdit', write: 'toolWrite',
+  search: 'toolSearch', fetch: 'toolFetch', todo: 'toolTodos',
+}
+
+function familyTitle(seg: ToolSeg): string {
+  const fam = toolFamily(seg.name)
+  return fam === 'other' ? seg.name : t(FAMILY_KEY[fam])
+}
+
+/** family 相关的元信息：文件名 / pattern / url / 命令…；带结果统计 */
+function toolMeta(seg: ToolSeg): { main: string; stat: string } {
+  const fam = toolFamily(seg.name)
+  const i = (typeof seg.input === 'object' && seg.input !== null ? seg.input : {}) as Record<string, unknown>
+  const str = (k: string): string => (typeof i[k] === 'string' ? (i[k] as string) : '')
+  const base = (path: string): string => path.split('/').pop() ?? path
+  const lines = seg.result === null || seg.result === '' ? 0 : seg.result.split('\n').length
+  if (fam === 'read') {
+    return { main: base(str('file_path') || str('path')), stat: seg.status === 'ok' && lines > 0 ? t('toolLines', { n: lines }) : '' }
+  }
+  if (fam === 'edit' || fam === 'write') return { main: base(str('file_path') || str('path')), stat: '' }
+  if (fam === 'search') {
+    const main = str('pattern') || str('query')
+    const path = str('path')
+    return { main: path !== '' ? `${main}  ${base(path)}` : main, stat: seg.status === 'ok' && lines > 0 ? t('toolResults', { n: lines }) : '' }
+  }
+  if (fam === 'fetch') return { main: str('url'), stat: '' }
+  if (fam === 'run') return { main: str('description') || str('command').replace(/\s+/g, ' '), stat: '' }
+  return { main: seg.summary, stat: '' }
+}
+
+function StatusTile({ status, pending }: { status: ToolSeg['status']; pending: boolean }) {
+  return (
+    <span
+      className={cn(
+        'flex size-6 shrink-0 items-center justify-center rounded-md border bg-background',
+        pending ? 'border-primary text-primary' : status === 'error' ? 'text-destructive' : 'text-success',
+      )}
+    >
+      {pending ? (
+        <LoaderCircle className="cc-icon-spin size-3.5" />
+      ) : status === 'error' ? (
+        <X className="size-3.5" />
+      ) : (
+        <Check className="size-3.5" />
+      )}
+    </span>
+  )
+}
+
+/** TodoWrite 专属清单卡（M48）：进行中高亮，收起时显示当前项 */
+function TodoCard({ seg }: { seg: ToolSeg }) {
+  const todos = (() => {
+    const i = (typeof seg.input === 'object' && seg.input !== null ? seg.input : {}) as Record<string, unknown>
+    if (!Array.isArray(i.todos)) return []
+    return i.todos.filter((x): x is { content?: string; status?: string; activeForm?: string } =>
+      typeof x === 'object' && x !== null,
+    )
+  })()
+  const hasActive = todos.some((td) => td.status === 'in_progress' || td.status === 'pending')
+  const [override, setOverride] = useState<boolean | null>(null)
+  const open = override ?? hasActive
+  if (todos.length === 0) return <PlainToolCard seg={seg} />
+  const current = todos.find((td) => td.status === 'in_progress')
+  const done = todos.filter((td) => td.status === 'completed' || td.status === 'in_progress').length
+  return (
+    <div className="mt-2 overflow-hidden rounded-lg border bg-secondary/40">
+      <button
+        className="flex w-full cursor-pointer items-center gap-2 px-2.5 py-1.5 text-left text-[13px] select-none hover:bg-sidebar-accent"
+        onClick={() => setOverride(!open)}
+      >
+        <StatusTile pending={seg.status === 'pending'} status={seg.status} />
+        <span className="shrink-0 text-[11px] font-medium tracking-wide text-foreground uppercase">{t('toolTodos')}</span>
+        <span className="shrink-0 text-[11px] text-muted-foreground tabular-nums">{done}/{todos.length}</span>
+        {!open && current !== undefined && (
+          <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{current.activeForm ?? current.content}</span>
+        )}
+        <ChevronRight className={cn('ml-auto size-3 shrink-0 text-faint transition-transform duration-150', open && 'rotate-90')} />
+      </button>
+      <div className={cn('cc-collapsible', open && 'open')}>
+        <div>
+          <ul className="flex flex-col gap-px px-2 pt-1 pb-2 text-xs">
+            {todos.map((td, i) => (
+              <li
+                className={cn(
+                  'flex items-start gap-2 rounded-md border border-transparent px-2 py-1 leading-relaxed',
+                  td.status === 'in_progress' && 'border-accent-bd bg-accent',
+                )}
+                key={i}
+              >
+                <span
+                  className={cn(
+                    'w-4 shrink-0 text-center font-mono',
+                    td.status === 'completed' ? 'text-success' : td.status === 'in_progress' ? 'text-primary' : 'text-faint',
+                  )}
+                >
+                  {td.status === 'completed' ? '✓' : td.status === 'in_progress' ? '◐' : '○'}
+                </span>
+                <span
+                  className={cn(
+                    td.status === 'completed' && 'text-muted-foreground line-through decoration-border',
+                    td.status === 'in_progress' && 'font-medium',
+                  )}
+                >
+                  {td.status === 'in_progress' && td.activeForm != null ? td.activeForm : td.content}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/** 单个工具卡：动词标题 + 元信息 + 统计；展开看入参/输出/截图 */
+function PlainToolCard({ seg }: { seg: ToolSeg }) {
+  const [open, setOpen] = useState(false)
+  const pending = seg.status === 'pending'
+  const meta = toolMeta(seg)
   const expandable =
     (seg.detail !== '' && seg.detail !== '{}') || (seg.result !== null && seg.result !== '') || seg.images.length > 0
   return (
-    <details className="group mt-2 overflow-hidden rounded-lg border bg-secondary/60">
-      <summary
+    <div className="mt-2">
+      <button
         className={cn(
-          'flex min-w-0 list-none items-center gap-2 px-2.5 py-1.5 select-none [&::-webkit-details-marker]:hidden',
-          expandable ? 'cursor-pointer hover:bg-sidebar-accent' : 'cursor-default',
+          'flex w-full items-center gap-2 rounded-md py-0.5 pr-2 pl-0.5 text-left select-none',
+          expandable ? 'cursor-pointer hover:bg-secondary/60' : 'cursor-default',
         )}
+        onClick={() => expandable && setOpen((o) => !o)}
       >
-        <span
-          className={cn(
-            'size-[7px] shrink-0 rounded-full',
-            seg.status === 'ok' && 'bg-success',
-            seg.status === 'error' && 'bg-destructive',
-            seg.status === 'pending' && 'animate-pulse bg-faint',
-          )}
-        />
-        <span className="shrink-0 font-mono text-xs font-medium">{seg.name}</span>
-        <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{seg.summary}</span>
+        <StatusTile pending={pending} status={seg.status} />
+        <span className={cn('shrink-0 text-[11px] font-medium tracking-wide text-foreground uppercase', pending && 'shimmer-text')}>
+          {familyTitle(seg)}
+        </span>
+        {meta.main !== '' && (
+          <span className={cn('min-w-0 flex-1 truncate text-xs text-muted-foreground', toolFamily(seg.name) === 'run' && seg.input !== null && 'font-mono')}>
+            {meta.main}
+          </span>
+        )}
         {seg.subCount > 0 && (
           <span className="shrink-0 rounded-full bg-accent px-2 text-xs text-accent-foreground">
             {t('subagentBadge', { n: seg.subCount })}
           </span>
         )}
-      </summary>
-      {expandable && (
-        <div className="border-t">
-          {seg.detail !== '' && seg.detail !== '{}' && (
-            <pre className="max-h-60 overflow-auto bg-sunken px-2.5 py-2 font-mono text-xs leading-relaxed break-words whitespace-pre-wrap">{seg.detail}</pre>
-          )}
-          {seg.result !== null && seg.result !== '' && (
-            <pre
-              className={cn(
-                'max-h-60 overflow-auto border-t bg-sunken px-2.5 py-2 font-mono text-xs leading-relaxed break-words whitespace-pre-wrap first:border-t-0',
-                seg.status === 'error' && 'text-destructive',
-              )}
-            >{seg.result}</pre>
-          )}
-          {seg.images.length > 0 && (
-            <div className="flex flex-wrap gap-2 border-t bg-sunken px-2.5 py-2 first:border-t-0">
-              {seg.images.map((img, i) => (
-                <Thumb image={img} key={i} />
-              ))}
-            </div>
-          )}
+        {meta.stat !== '' && <span className="ml-auto shrink-0 text-[11px] text-faint tabular-nums">{meta.stat}</span>}
+        {expandable && (
+          <ChevronRight className={cn('shrink-0 size-3 text-faint transition-transform duration-150', open && 'rotate-90', meta.stat === '' && 'ml-auto')} />
+        )}
+      </button>
+      <div className={cn('cc-collapsible', open && 'open')}>
+        <div>
+          <div className="mt-1 ml-8 flex flex-col gap-1.5 overflow-hidden rounded-lg border">
+            {seg.detail !== '' && seg.detail !== '{}' && (
+              <pre className="max-h-60 overflow-auto bg-sunken px-2.5 py-2 font-mono text-xs leading-relaxed break-words whitespace-pre-wrap">{seg.detail}</pre>
+            )}
+            {seg.result !== null && seg.result !== '' && (
+              <pre
+                className={cn(
+                  'max-h-60 overflow-auto border-t bg-sunken px-2.5 py-2 font-mono text-xs leading-relaxed break-words whitespace-pre-wrap first:border-t-0',
+                  seg.status === 'error' && 'text-destructive',
+                )}
+              >{seg.result}</pre>
+            )}
+            {seg.images.length > 0 && (
+              <div className="flex flex-wrap gap-2 border-t bg-sunken px-2.5 py-2 first:border-t-0">
+                {seg.images.map((img, i) => (
+                  <Thumb image={img} key={i} />
+                ))}
+              </div>
+            )}
+          </div>
         </div>
-      )}
-    </details>
+      </div>
+    </div>
+  )
+}
+
+function ToolRow({ seg }: { seg: ToolSeg }) {
+  if (toolFamily(seg.name) === 'todo') return <TodoCard seg={seg} />
+  return <PlainToolCard seg={seg} />
+}
+
+/** 同族分组卡（M48）：「搜索 ×3, 完成」，运行中 shimmer，展开看每个调用 */
+function ToolGroupCard({ segs, children }: { segs: ToolSeg[]; children: React.ReactNode }) {
+  const [open, setOpen] = useState(false)
+  const running = segs.some((sg) => sg.status === 'pending')
+  const hasError = segs.some((sg) => sg.status === 'error')
+  const verb = familyTitle(segs[0]!)
+  const tail = hasError ? t('toolError') : running ? t('toolRunning') : t('toolDone')
+  return (
+    <div className="mt-2">
+      <button
+        className="flex w-full cursor-pointer items-center gap-1.5 rounded-md py-0.5 pr-2 pl-0.5 text-left text-[13px] select-none hover:bg-secondary/60"
+        onClick={() => setOpen((o) => !o)}
+      >
+        <StatusTile pending={running} status={hasError ? 'error' : 'ok'} />
+        <span className={cn('min-w-0 flex-1 truncate font-medium text-muted-foreground', running && 'shimmer-text')}>
+          {`${verb} ×${segs.length}, ${tail}`}
+        </span>
+        <ChevronRight className={cn('size-3 shrink-0 text-faint transition-transform duration-150', open && 'rotate-90')} />
+      </button>
+      <div className={cn('cc-collapsible', open && 'open')}>
+        <div>
+          <div className="ml-8">{children}</div>
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -156,9 +331,45 @@ interface Props {
   sessionId: string
 }
 
+type RenderItem =
+  | { kind: 'msg'; m: ChatMsg }
+  | { kind: 'toolgroup'; key: string; family: ToolFamily; msgs: ChatMsg[] }
+
+/** 连续的「纯工具、同族、无 sidechain 锚」assistant 消息 → 一组（M48） */
+function buildRenderItems(messages: ChatMsg[]): RenderItem[] {
+  const out: RenderItem[] = []
+  for (const m of messages) {
+    const toolOnly =
+      m.role === 'assistant' &&
+      m.sidechain === null &&
+      m.segments.length > 0 &&
+      m.segments.every((sg) => sg.kind === 'tool')
+    const fam = toolOnly ? toolFamily((m.segments[0] as ToolSeg).name) : null
+    const uniform = toolOnly && m.segments.every((sg) => toolFamily((sg as ToolSeg).name) === fam)
+    // TodoWrite 有专属卡，不进组
+    if (uniform && fam !== null && fam !== 'todo') {
+      const last = out[out.length - 1]
+      if (last !== undefined && last.kind === 'toolgroup' && last.family === fam) {
+        last.msgs.push(m)
+        continue
+      }
+      out.push({ kind: 'toolgroup', key: m.key, family: fam, msgs: [m] })
+      continue
+    }
+    out.push({ kind: 'msg', m })
+  }
+  // 只有一条消息且只有一个调用的「组」还原成普通消息
+  return out.map((it) =>
+    it.kind === 'toolgroup' && it.msgs.length === 1 && it.msgs[0]!.segments.length === 1
+      ? { kind: 'msg' as const, m: it.msgs[0]! }
+      : it,
+  )
+}
+
 export function Chat({ messages, streamText, streamThinking, turn, sessionId }: Props) {
   useLang()
   const scrollRef = useRef<HTMLDivElement>(null)
+  const items = useMemo(() => buildRenderItems(messages), [messages])
 
   useEffect(() => {
     const el = scrollRef.current
@@ -173,8 +384,33 @@ export function Chat({ messages, streamText, streamThinking, turn, sessionId }: 
             {t('draftHint')}
           </div>
         )}
-        {messages.map((m) =>
-          m.role === 'user' ? (
+        {items.map((it) => {
+          if (it.kind === 'toolgroup') {
+            const segs = it.msgs.flatMap((gm) => gm.segments.filter((sg): sg is ToolSeg => sg.kind === 'tool'))
+            return (
+              <div className="mt-0.5 max-w-[94%] self-start" key={it.key}>
+                <ToolGroupCard segs={segs}>
+                  {it.msgs.map((gm) =>
+                    gm.segments.map((seg, i) =>
+                      seg.kind === 'tool' ? (
+                        <div key={`${gm.key}-${i}`}>
+                          <ToolRow seg={seg} />
+                          {seg.agent !== null && (
+                            <SidechainBlock
+                              fetchPath={`/api/v1/sessions/${sessionId}/subagents/${seg.agent.id}`}
+                              label={seg.agent.label}
+                            />
+                          )}
+                        </div>
+                      ) : null,
+                    ),
+                  )}
+                </ToolGroupCard>
+              </div>
+            )
+          }
+          const m = it.m
+          return m.role === 'user' ? (
             <div className="mt-4 flex flex-col items-end gap-2 first:mt-0" key={m.key}>
               {textOfSegments(m.segments) !== '' && (
                 <div className="max-w-[78%] rounded-2xl rounded-br-md border border-accent-bd bg-accent px-[15px] py-[11px] text-[15px] leading-normal break-words whitespace-pre-wrap shadow-xs">
@@ -222,15 +458,17 @@ export function Chat({ messages, streamText, streamThinking, turn, sessionId }: 
                   label={t('subagentMsgs', { n: m.sidechain.count })}
                 />
               )}
-              {m.meta !== null && <div className="mt-1 text-xs text-faint">{m.meta}</div>}
+              {m.meta !== null && !m.segments.every((sg) => sg.kind === 'tool') && (
+                <div className="mt-1 text-xs text-faint">{m.meta}</div>
+              )}
             </div>
-          ),
-        )}
+          )
+        })}
         {(streamText !== '' || streamThinking !== '') && (
           <div className="mt-2.5 max-w-[94%] self-start">
             {streamThinking !== '' && <ThinkingBlock streaming text={streamThinking} />}
             {streamText !== '' && (
-              <div className="text-[15px] leading-relaxed break-words">
+              <div className="cc-stream-cursor text-[15px] leading-relaxed break-words">
                 <Markdown text={streamText} />
               </div>
             )}
