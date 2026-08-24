@@ -2,7 +2,7 @@
  * 对话流：白底阅读面，内容列居中 max-w-[760px]。
  * 用户消息 = 右对齐软 accent 气泡；助手消息 = 文本段 + 工具行交错。
  */
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Check, ChevronRight, LoaderCircle, Sparkles, X } from 'lucide-react'
 import type { ChatMsg, ImageRef, StreamTool, ToolSeg, TurnStatus } from '../types'
 import { formatElapsedMs } from '../lib/format'
@@ -372,6 +372,9 @@ interface Props {
   streamTools: StreamTool[]
   turn: TurnStatus
   sessionId: string
+  /** 还有更早的历史页（M51） */
+  hasEarlier: boolean
+  onLoadEarlier: () => void
 }
 
 type RenderItem =
@@ -515,17 +518,27 @@ function WorkedTurn({ node, children }: { node: TurnNode; children: React.ReactN
   )
 }
 
-export function Chat({ messages, streamText, streamThinking, streamTools, turn, sessionId }: Props) {
+export function Chat({
+  messages, streamText, streamThinking, streamTools, turn, sessionId, hasEarlier, onLoadEarlier,
+}: Props) {
   useLang()
   const scrollRef = useRef<HTMLDivElement>(null)
+  /** 前插锚点（M51）：点「加载更早」时记录滚动位置，插完还原，不跳底 */
+  const prependRef = useRef<{ h: number; top: number } | null>(null)
   const nodes = useMemo(
     () => buildNodes(buildRenderItems(messages), turn.running),
     [messages, turn.running],
   )
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = scrollRef.current
-    if (el !== null) el.scrollTop = el.scrollHeight
+    if (el === null) return
+    if (prependRef.current !== null) {
+      el.scrollTop = el.scrollHeight - prependRef.current.h + prependRef.current.top
+      prependRef.current = null
+      return
+    }
+    el.scrollTop = el.scrollHeight
   }, [messages, streamText, streamThinking, streamTools.length, turn.running])
 
   const renderItem = (it: RenderItem): React.ReactNode => {
@@ -612,6 +625,18 @@ export function Chat({ messages, streamText, streamThinking, streamTools, turn, 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto" ref={scrollRef}>
       <div className="mx-auto flex max-w-[760px] flex-col px-4 pt-4 pb-5">
+        {hasEarlier && (
+          <button
+            className="mx-auto mb-2 cursor-pointer rounded-full border px-4 py-1 text-xs text-muted-foreground select-none hover:bg-secondary/60 hover:text-foreground"
+            onClick={() => {
+              const el = scrollRef.current
+              if (el !== null) prependRef.current = { h: el.scrollHeight, top: el.scrollTop }
+              onLoadEarlier()
+            }}
+          >
+            {t('loadEarlier')}
+          </button>
+        )}
         {messages.length === 0 && streamText === '' && streamThinking === '' && streamTools.length === 0 && (
           <div className="m-auto py-12 text-center text-[13px] text-faint">
             {t('draftHint')}

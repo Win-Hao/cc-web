@@ -54,6 +54,9 @@ export default function App() {
   const [streamThinking, setStreamThinking] = useState('')
   /** 正在被模型生成的工具调用（M50）：content_block_start 就出标签，不等整条消息 */
   const [streamTools, setStreamTools] = useState<StreamTool[]>([])
+  /** 历史分页（M51）：还有更早 + 最早 cursor */
+  const [historyMore, setHistoryMore] = useState<{ hasMore: boolean; before: number | null }>({ hasMore: false, before: null })
+  const loadingOlderRef = useRef(false)
   const [state, setState] = useState<SessionState>('idle')
   const [approval, setApproval] = useState<Approval | null>(null)
   const [usage, setUsage] = useState('')
@@ -272,60 +275,94 @@ export default function App() {
     if (!modelsLoadedRef.current) void loadModels()
   }, [loadModels])
 
-  const loadHistory = useCallback(async (id: string) => {
-    try {
-      const d = await api<{ messages: HistoryMessage[] }>(`/api/v1/sessions/${id}/history?limit=100`)
-      const out: ChatMsg[] = []
-      toolLocRef.current = new Map()
-      for (const m of d.messages) {
-        const content = m.content ?? m.text
-        if (m.role === 'assistant') {
-          const segments = segmentsFromContent(content)
-          if (segments.length === 0) continue
-          const key = nextKey()
-          segments.forEach((seg, si) => {
-            if (seg.kind === 'tool' && seg.id !== null) toolLocRef.current.set(seg.id, { key, si })
-          })
-          const sidechain =
-            typeof m.uuid === 'string' && (m.sidechain_count ?? 0) > 0
-              ? { uuid: m.uuid, count: m.sidechain_count! }
-              : null
-          out.push({ key, role: 'assistant', ts: parseTs(m.timestamp), segments, meta: m.model, sidechain })
-        } else if (m.role === 'user') {
-          // tool_result 回填到已登记的工具段（此时还没 setState，直接改本地数组）
-          for (const r of toolResultsFromContent(content)) {
-            const loc = r.id !== null ? toolLocRef.current.get(r.id) : undefined
-            if (loc === undefined) continue
-            const msg = out.find((x) => x.key === loc.key)
-            const seg = msg?.segments[loc.si]
-            if (seg !== undefined && seg.kind === 'tool') {
-              const t = seg as ToolSeg
-              t.status = r.isError ? 'error' : 'ok'
-              if (r.text !== '') t.result = r.text
-              if (r.images.length > 0) t.images = r.images
-            }
-          }
-          const segs = segmentsFromContent(content)
-          const text = humanText(textOfSegments(segs))
-          const images = segs.filter((s) => s.kind === 'image')
-          if (text !== '' || images.length > 0) {
-            out.push({
-              key: nextKey(),
-              role: 'user',
-              ts: parseTs(m.timestamp),
-              segments: [...(text !== '' ? [{ kind: 'text' as const, text }] : []), ...images],
-              meta: null,
-              sidechain: null,
-            })
+  /** 历史页 → ChatMsg[]（M51 抽出来给「加载更早」复用）。工具段登记进 toolLocRef。 */
+  const buildHistoryMsgs = useCallback((messages: HistoryMessage[]): ChatMsg[] => {
+    const out: ChatMsg[] = []
+    for (const m of messages) {
+      const content = m.content ?? m.text
+      if (m.role === 'assistant') {
+        const segments = segmentsFromContent(content)
+        if (segments.length === 0) continue
+        const key = nextKey()
+        segments.forEach((seg, si) => {
+          if (seg.kind === 'tool' && seg.id !== null) toolLocRef.current.set(seg.id, { key, si })
+        })
+        const sidechain =
+          typeof m.uuid === 'string' && (m.sidechain_count ?? 0) > 0
+            ? { uuid: m.uuid, count: m.sidechain_count! }
+            : null
+        out.push({ key, role: 'assistant', ts: parseTs(m.timestamp), segments, meta: m.model, sidechain })
+      } else if (m.role === 'user') {
+        // tool_result 回填到已登记的工具段（此时还没 setState，直接改本地数组）
+        for (const r of toolResultsFromContent(content)) {
+          const loc = r.id !== null ? toolLocRef.current.get(r.id) : undefined
+          if (loc === undefined) continue
+          const msg = out.find((x) => x.key === loc.key)
+          const seg = msg?.segments[loc.si]
+          if (seg !== undefined && seg.kind === 'tool') {
+            const t = seg as ToolSeg
+            t.status = r.isError ? 'error' : 'ok'
+            if (r.text !== '') t.result = r.text
+            if (r.images.length > 0) t.images = r.images
           }
         }
+        const segs = segmentsFromContent(content)
+        const text = humanText(textOfSegments(segs))
+        const images = segs.filter((s) => s.kind === 'image')
+        if (text !== '' || images.length > 0) {
+          out.push({
+            key: nextKey(),
+            role: 'user',
+            ts: parseTs(m.timestamp),
+            segments: [...(text !== '' ? [{ kind: 'text' as const, text }] : []), ...images],
+            meta: null,
+            sidechain: null,
+          })
+        }
       }
-      setMsgs(out)
+    }
+    return out
+  }, [])
+
+  const loadHistory = useCallback(async (id: string) => {
+    try {
+      const d = await api<{ messages: HistoryMessage[]; has_more: boolean }>(
+        `/api/v1/sessions/${id}/history?limit=100`,
+      )
+      toolLocRef.current = new Map()
+      setMsgs(buildHistoryMsgs(d.messages))
+      setHistoryMore({
+        hasMore: d.has_more === true,
+        before: d.messages[0]?.cursor ?? null,
+      })
       void loadSubagents(id)
     } catch (e) {
       appendError((e as Error).message)
     }
-  }, [appendError, loadSubagents])
+  }, [appendError, buildHistoryMsgs, loadSubagents])
+
+  /** 「加载更早的消息」（M51）：before cursor 取上一页，前插 */
+  const loadOlder = useCallback(async () => {
+    const id = sessionId
+    const before = historyMore.before
+    if (id === null || before === null || loadingOlderRef.current) return
+    loadingOlderRef.current = true
+    try {
+      const d = await api<{ messages: HistoryMessage[]; has_more: boolean }>(
+        `/api/v1/sessions/${id}/history?limit=100&before=${before}`,
+      )
+      const older = buildHistoryMsgs(d.messages)
+      setMsgs((prev) => [...older, ...prev])
+      setHistoryMore({
+        hasMore: d.has_more === true,
+        before: d.messages[0]?.cursor ?? null,
+      })
+    } catch (e) {
+      appendError((e as Error).message)
+    } finally {
+      loadingOlderRef.current = false
+    }
+  }, [sessionId, historyMore.before, buildHistoryMsgs, appendError])
 
   /* ── 选中会话：历史 + WS 订阅（断线每 3s 重连，接回后补历史/用量）── */
   useEffect(() => {
@@ -334,6 +371,7 @@ export default function App() {
     setStream('')
     setStreamThinking('')
     setStreamTools([])
+    setHistoryMore({ hasMore: false, before: null })
     thinkingStartRef.current = null
     turnStartRef.current = null
     setTurnStart(null)
@@ -804,6 +842,8 @@ export default function App() {
               streamText={stream}
               streamThinking={streamThinking}
               streamTools={streamTools}
+              hasEarlier={historyMore.hasMore}
+              onLoadEarlier={loadOlder}
               turn={{
                 running: state !== 'idle',
                 preparing: state !== 'idle' && !sawContent,

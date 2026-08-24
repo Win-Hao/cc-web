@@ -74,33 +74,54 @@ function toEntry(line: number, row: Record<string, unknown>): SessionEntry {
   }
 }
 
-/** 非 sidechain 消息沿 parentUuid 走链；每个节点有多个孩子时取行号最大的（最新分支赢）。 */
+/**
+ * 主线还原（M51 重写）：**从最新的消息叶子沿 parentUuid 向上走**。
+ *
+ * 旧算法从根往下贪心选「行号最大的孩子」——真实转写里 ai-title /
+ * attachment / last-prompt 等 bookkeeping 行也带 uuid、常挂在老消息下，
+ * 一旦被选中就走进死胡同，2900 行的会话只剩 13 行（本机实测）。
+ * 向上走天然免疫：起点就是真实对话的末端，死胡同行根本不在路径上。
+ *
+ * - rewind 分叉：最新叶子属于最新分支 → 旧分支自然不在路径上；
+ * - 断链（compact/裁剪导致 parentUuid 指向不存在的行）：一段走完后，
+ *   从「更早且未访问」的最新消息行继续向上拼接，不整段丢弃；
+ * - attachment 等中继行走链但不输出 —— mainline 只留 user/assistant。
+ */
 function buildMainline(entries: SessionEntry[]): SessionEntry[] {
   const msgs = entries.filter((e) => e.uuid !== null && !e.isSidechain)
-  const childrenOf = new Map<string, SessionEntry[]>()
-  const roots: SessionEntry[] = []
-  for (const e of msgs) {
-    if (e.parentUuid === null) {
-      roots.push(e)
-    } else {
-      const kids = childrenOf.get(e.parentUuid)
-      if (kids) kids.push(e)
-      else childrenOf.set(e.parentUuid, [e])
-    }
-  }
-  const newest = (list: SessionEntry[]) =>
-    list.reduce((a, b) => (b.line > a.line ? b : a))
+  if (msgs.length === 0) return []
+  const byUuid = new Map<string, SessionEntry>()
+  for (const e of msgs) byUuid.set(e.uuid!, e)
+  const renderable = (e: SessionEntry) => e.type === 'user' || e.type === 'assistant'
 
-  const chain: SessionEntry[] = []
-  const seen = new Set<string>()
-  let cur: SessionEntry | null = roots.length > 0 ? newest(roots) : null
-  while (cur !== null && !seen.has(cur.uuid!)) {
-    seen.add(cur.uuid!)
-    chain.push(cur)
-    const kids = childrenOf.get(cur.uuid!)
-    cur = kids && kids.length > 0 ? newest(kids) : null
+  const newestBelow = (line: number, visited: Set<string>): SessionEntry | undefined => {
+    let best: SessionEntry | undefined
+    for (const e of msgs) {
+      if (e.line >= line || visited.has(e.uuid!) || !renderable(e)) continue
+      if (best === undefined || e.line > best.line) best = e
+    }
+    return best
   }
-  return chain
+
+  const visited = new Set<string>()
+  const chain: SessionEntry[] = []
+  // 种子：最新的 user/assistant 行；整个文件都没有就取最新的任意消息行
+  let seed = newestBelow(Number.POSITIVE_INFINITY, visited) ?? msgs[msgs.length - 1]
+  while (seed !== undefined) {
+    let cur: SessionEntry | undefined = seed
+    let top = seed.line
+    while (cur !== undefined && !visited.has(cur.uuid!)) {
+      visited.add(cur.uuid!)
+      chain.push(cur)
+      top = cur.line
+      cur = cur.parentUuid !== null ? byUuid.get(cur.parentUuid) : undefined
+    }
+    // 段顶之上还有更早的未访问消息（断链/多纪元）→ 继续拼；
+    // 被 rewind 放弃的旧分支行号在段顶之下，不会被拼进来。
+    seed = newestBelow(top, visited)
+  }
+  chain.sort((a, b) => a.line - b.line)
+  return chain.filter(renderable)
 }
 
 /**

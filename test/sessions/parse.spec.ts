@@ -4,6 +4,9 @@
  */
 import { describe, it, expect } from 'vitest'
 import { fileURLToPath } from 'node:url'
+import { mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { parseSessionFile } from '#/sessions/parse.js'
 
 const FIXTURES = fileURLToPath(new URL('../fixtures/sessions', import.meta.url))
@@ -73,5 +76,69 @@ describe('parseSessionFile', () => {
     // entries 里有 mode 行，但 mainline 里没有
     expect(parsed.entries.some((e) => e.type === 'mode')).toBe(true)
     expect(parsed.mainline.every((e) => typeof e.uuid === 'string')).toBe(true)
+  })
+})
+
+describe('buildMainline 的健壮性（M51：真实转写里的丢内容 bug）', () => {
+  function write(lines: unknown[]): string {
+    const dir = mkdtempSync(join(tmpdir(), 'cc-web-parse-'))
+    const p = join(dir, 'dddddddd-0000-0000-0000-000000000004.jsonl')
+    writeFileSync(p, lines.map((l) => JSON.stringify(l)).join('\n') + '\n')
+    return p
+  }
+  const msg = (type: string, uuid: string, parent: string | null, text = 'x') => ({
+    type, uuid, parentUuid: parent, isSidechain: false,
+    message: type === 'user' || type === 'assistant' ? { role: type, content: text } : undefined,
+  })
+
+  it('挂在老消息下的死胡同 bookkeeping 行不劫持主线（旧贪心算法的 bug）', async () => {
+    const p = write([
+      msg('user', 'u1', null),
+      msg('assistant', 'a1', 'u1'),
+      msg('user', 'u2', 'a1'),
+      msg('assistant', 'a2', 'u2'),
+      // 晚写入、挂在 a1 下、自己没有孩子的 bookkeeping 行 ——
+      // 旧算法在 a1 处选「行号最大的孩子」会选中它然后断链
+      msg('ai-title', 'title1', 'a1'),
+    ])
+    const parsed = await parseSessionFile(p)
+    expect(parsed.mainline.map((e) => e.uuid)).toEqual(['u1', 'a1', 'u2', 'a2'])
+  })
+
+  it('穿过 attachment 等 bookkeeping 中继行：走链但不输出', async () => {
+    const p = write([
+      msg('user', 'u1', null),
+      msg('attachment', 'att1', 'u1'),
+      msg('assistant', 'a1', 'att1'),
+      msg('user', 'u2', 'a1'),
+    ])
+    const parsed = await parseSessionFile(p)
+    expect(parsed.mainline.map((e) => e.uuid)).toEqual(['u1', 'a1', 'u2'])
+  })
+
+  it('断链（parentUuid 指向不存在的行）：更早的段拼接回来，不整段丢弃', async () => {
+    const p = write([
+      msg('user', 'u1', null),
+      msg('assistant', 'a1', 'u1'),
+      // compact/裁剪造成 u2 的父链断裂
+      msg('user', 'u2', 'missing-uuid'),
+      msg('assistant', 'a2', 'u2'),
+    ])
+    const parsed = await parseSessionFile(p)
+    expect(parsed.mainline.map((e) => e.uuid)).toEqual(['u1', 'a1', 'u2', 'a2'])
+  })
+
+  it('rewind 分叉语义不回归：被放弃的旧分支仍然不进主线、不被拼接', async () => {
+    const p = write([
+      msg('user', 'u1', null),
+      msg('assistant', 'a1', 'u1'),
+      msg('user', 'u2-old', 'a1'),
+      msg('assistant', 'a2-old', 'u2-old'),
+      // rewind 后的新分支(更晚写入)
+      msg('user', 'u2-new', 'a1'),
+      msg('assistant', 'a2-new', 'u2-new'),
+    ])
+    const parsed = await parseSessionFile(p)
+    expect(parsed.mainline.map((e) => e.uuid)).toEqual(['u1', 'a1', 'u2-new', 'a2-new'])
   })
 })
