@@ -84,6 +84,38 @@ describe('GET /api/v1/plan-usage（M34 缓存策略）', () => {
     expect(calls).toHaveLength(1) // 缓存命中，没有第二次 spawn
   })
 
+  it('缓存过期：立即返回旧值（不阻塞），后台借活引擎刷新（M35 SWR）', async () => {
+    const engines: FakeEngine[] = []
+    const registry = new SessionRegistry({
+      hub: new SessionHub(),
+      factory: () => {
+        const e = new FakeEngine()
+        engines.push(e)
+        return e
+      },
+    })
+    const app = createApp({
+      projectsRoot: mkdtempSync(join(tmpdir(), 'cc-web-plan-')),
+      registry,
+      planTtlMs: -1, // 立即过期（0 在同一毫秒内不算过期）
+    })
+    await app.request('/api/v1/plan-usage') // 预热（元数据引擎）
+    await registry.ensure('s1') // 活引擎
+    const live = engines[1]!
+    const sentBefore = live.sent.length
+
+    const t0 = Date.now()
+    const body = (await (await app.request('/api/v1/plan-usage')).json()) as {
+      code: number
+      data: { fetched_at: number }
+    }
+    expect(Date.now() - t0).toBeLessThan(200) // 不等网络往返，立即回
+    expect(body.code).toBe(0)
+    // 后台刷新已发出（借活引擎）
+    await new Promise((r) => setTimeout(r, 50))
+    expect(live.sent.length).toBeGreaterThan(sentBefore)
+  })
+
   it('缓存未过期时有活引擎也不打扰它', async () => {
     const { app, registry, engines, calls } = setup()
     await app.request('/api/v1/plan-usage') // 预热缓存（spawn 1 次）

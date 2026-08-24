@@ -31,6 +31,8 @@ export interface AppDeps {
   registry?: SessionRegistry
   /** M8：传了就对 /api/v1/* 强制 bearer 鉴权；不传是测试形态 */
   token?: string
+  /** M35：套餐额度缓存的过期阈值（测试注入 0 验证后台刷新） */
+  planTtlMs?: number
   /** React 前端的构建产物目录（vite build 的 dist/web）；测试注入临时目录 */
   webRoot?: string
 }
@@ -126,7 +128,8 @@ export function createApp(deps: AppDeps) {
   let metaInflight: Promise<MetaInfo> | null = null
   /** 套餐额度缓存（M34）：元数据引擎顺带拉，之后借活引擎按需刷新 */
   let planCache: { payload: unknown; fetched_at: number } | null = null
-  const PLAN_TTL_MS = 5 * 60_000
+  let planRefreshing = false
+  const planTtlMs = deps.planTtlMs ?? 5 * 60_000
 
   async function ensureMeta(registry: SessionRegistry): Promise<MetaInfo> {
     if (metaCache !== null) return metaCache
@@ -491,7 +494,8 @@ export function createApp(deps: AppDeps) {
    *   3. 其余情况直接给缓存（带 fetched_at，前端标注数据时间）
    */
   app.get('/api/v1/plan-usage', async (c) => {
-    if (deps.registry === undefined) return c.json(ok(null))
+    const registry = deps.registry
+    if (registry === undefined) return c.json(ok(null))
     const trim = (payload: unknown) => {
       const p = payload as Record<string, unknown>
       return {
@@ -501,19 +505,31 @@ export function createApp(deps: AppDeps) {
         fetched_at: planCache?.fetched_at ?? Date.now(),
       }
     }
-    const stale = planCache === null || Date.now() - planCache.fetched_at > PLAN_TTL_MS
-    if (stale) {
-      const live = deps.registry.liveSessionIds()[0]
-      if (live !== undefined) {
-        const payload = await deps.registry.getUsage(live)
-        if (payload !== null) planCache = { payload, fetched_at: Date.now() }
-      } else if (planCache === null) {
-        // 完全没有缓存：走元数据引擎（本来也要为模型列表起它，只此一次）
-        await ensureMeta(deps.registry).catch(() => null)
+    // SWR（M35）：有缓存就立即返回 —— get_usage 要出网问 Anthropic（秒级），
+    // 绝不让面板等它。过期且有活引擎 → 后台刷新，下次打开就是新的。
+    if (planCache !== null) {
+      const stale = Date.now() - planCache.fetched_at > planTtlMs
+      const live = registry.liveSessionIds()[0]
+      if (stale && live !== undefined && !planRefreshing) {
+        planRefreshing = true
+        void registry
+          .getUsage(live)
+          .then((payload) => {
+            if (payload !== null) planCache = { payload, fetched_at: Date.now() }
+          })
+          .catch(() => {})
+          .finally(() => {
+            planRefreshing = false
+          })
       }
+      return c.json(ok(trim(planCache.payload)))
     }
-    if (planCache === null) return c.json(ok(null))
-    return c.json(ok(trim(planCache.payload)))
+    // 真·冷启动（页面加载的预热还没完成）：等元数据引擎那一次
+    await ensureMeta(registry).catch(() => null)
+    // ensureMeta 内部会填 planCache；TS 的控制流分析跟不上闭包赋值，重取一次
+    const filled = planCache as { payload: unknown; fetched_at: number } | null
+    if (filled === null) return c.json(ok(null))
+    return c.json(ok(trim(filled.payload)))
   })
 
   app.get('/api/v1/usage', async (c) => {
