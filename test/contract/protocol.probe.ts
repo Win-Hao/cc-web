@@ -40,10 +40,11 @@ interface Recorded {
  * 起一个真实引擎会话：新 session id（不污染日常会话），cwd 用临时目录
  * （避免读用户项目的 CLAUDE.md）。收到 result 帧或超时后结束。
  */
-function recordTurn(prompt: string): Promise<Recorded> {
+function recordTurn(prompt: string, setup?: (cwd: string) => void): Promise<Recorded> {
   return new Promise((resolve, reject) => {
     const sessionId = randomUUID()
     const cwd = mkdtempSync(join(tmpdir(), 'cc-web-probe-'))
+    setup?.(cwd)
     const child = spawn(
       CLAUDE,
       [
@@ -54,6 +55,7 @@ function recordTurn(prompt: string): Promise<Recorded> {
         '--output-format',
         'stream-json',
         '--include-partial-messages',
+        '--replay-user-messages',
         '--session-id',
         sessionId,
       ],
@@ -236,6 +238,25 @@ describe('协议探测：录制真实帧', () => {
     expect(types[0]).toBe('system')
     expect(types).toContain('assistant')
     expect(types).toContain('result')
+  })
+
+  it('录一轮带工具调用的对话（tool_use 流式入参 / tool_result / 收尾文本）', async () => {
+    // Read 在默认权限模式下免审批，所以 -p 模式能跑完整个工具回合。
+    // 这份 fixture 是 D7 normalizer 的事实来源：content_block_start(tool_use)、
+    // input_json_delta、user 帧里的 tool_result 长什么样都从这里看。
+    const rec = await recordTurn(
+      'Use the Read tool to read the file hello.txt in the current directory, then reply with exactly its contents and nothing else.',
+      (cwd) => writeFileSync(join(cwd, 'hello.txt'), 'cc-web probe says hello\n'),
+    )
+    saveFixture('tool-turn', rec)
+    const frames = rec.received.map((l) => JSON.parse(l) as { type?: string; message?: { content?: unknown } })
+    const blockTypes = (f: { message?: { content?: unknown } }) =>
+      Array.isArray(f.message?.content)
+        ? (f.message!.content as { type?: string }[]).map((b) => b.type)
+        : []
+    expect(frames.some((f) => f.type === 'assistant' && blockTypes(f).includes('tool_use'))).toBe(true)
+    expect(frames.some((f) => f.type === 'user' && blockTypes(f).includes('tool_result'))).toBe(true)
+    expect(frames.some((f) => f.type === 'result')).toBe(true)
   })
 
   it('录控制协议：initialize / list_models / set_model 的请求与响应', async () => {

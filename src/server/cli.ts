@@ -103,6 +103,7 @@ export function buildEngineArgs(
   const args = ['-p', '--verbose', '--input-format', 'stream-json', '--output-format', 'stream-json']
   if (caps.partialMessages) args.push('--include-partial-messages')
   if (caps.allowDangerousSkip) args.push('--allow-dangerously-skip-permissions')
+  if (caps.replayUserMessages) args.push('--replay-user-messages') // D7：user 帧回显带 uuid
   if (opts.newSessionId !== undefined) {
     if (!caps.sessionId) {
       throw new Error('claude CLI is too old for new sessions (missing --session-id); please upgrade')

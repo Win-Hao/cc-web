@@ -30,7 +30,7 @@ function fileToImageRef(f: File): Promise<ImageRef | null> {
     r.onload = () => {
       const url = r.result as string // data:image/png;base64,....
       const comma = url.indexOf(',')
-      resolve(comma === -1 ? null : { mediaType: f.type, data: url.slice(comma + 1) })
+      resolve(comma === -1 ? null : { media_type: f.type, data: url.slice(comma + 1) })
     }
     r.onerror = () => resolve(null)
     r.readAsDataURL(f)
@@ -109,7 +109,7 @@ export function Composer({
                 <img
                   alt=""
                   className="size-14 rounded-lg border object-cover"
-                  src={`data:${img.mediaType};base64,${img.data}`}
+                  src={`data:${img.media_type};base64,${img.data}`}
                 />
                 <button
                   className="absolute -top-1.5 -right-1.5 hidden size-4 cursor-pointer items-center justify-center rounded-full bg-foreground text-background group-hover:flex"

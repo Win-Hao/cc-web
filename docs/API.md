@@ -36,7 +36,7 @@ id（见下面 `approval` 事件），两个撞名，实现时必混。
 | POST | `/api/v1/sessions` | 新建会话：`{cwd}` → `{session_id}`（服务器发 uuid，引擎走 `--session-id`） |
 | POST | `/api/v1/sessions` | 新建会话，body 带 `cwd`。服务器生成 uuid 用 `--session-id` 传入，响应同步返回 session id |
 | GET | `/api/v1/sessions/:id` | 会话元信息：cwd、模型、权限模式、状态 |
-| GET | `/api/v1/sessions/:id/history` | 历史消息。**cursor 分页**：`?limit=N&before=<cursor>`，响应带 `has_more`（R9：jsonl 是 append-only，用 cursor 不用 offset） |
+| GET | `/api/v1/sessions/:id/history` | 历史消息（D7：归一化后的 Message，tool_result 已配对进 tool_use 块，bookkeeping 行不出）。**cursor 分页**：`?limit=N&before=<cursor>`，响应带 `has_more`（R9：jsonl 是 append-only，用 cursor 不用 offset） |
 | GET | `/api/v1/sessions/:id/usage` | 本会话 token / 成本聚合 |
 | POST | `/api/v1/sessions/:id/prompt` | 发提示词。body `{text, images?}`；images 为 `{media_type, data(base64)}[]`，四种位图、单张 ≤5MB、最多 8 张，有图时 text 可空。并发策略见 R7：运行中拒绝；waiting-approval 也拒绝 |
 | POST | `/api/v1/sessions/:id/interrupt` | 中断（→ `interrupt`） |
@@ -68,10 +68,10 @@ API key / Bedrock / Vertex 用户本来就没有订阅额度
 
 | 事件 | 时机 |
 | --- | --- |
-| `message` | 新消息（assistant / user / tool） |
-| `delta` | 流式增量（靠 `--include-partial-messages`，见 PROTOCOL §1） |
-| `usage` | 本轮 usage 更新 |
-| `state` | 状态变化：idle / running / waiting-approval |
+| `message` | 一条归一化后的 Message（与 /history 同形，D7）。**按 `key` upsert**：占位（`partial: true`，key = `<message.id>:<index>` 或 `prompt:<n>`）先到，最终消息带 `replaces` 换掉它；tool_result 到了同一 key 再发一次（tool_use 块的 status / result 变了） |
+| `delta` | `{key, kind: text \| thinking, chunk}`，追加到对应占位的块上（靠 `--include-partial-messages`，见 PROTOCOL §1） |
+| `turn_end` | 回合结束：`{duration_ms, output_tokens, cost_usd}`（来自 result 帧） |
+| `state` | 状态变化：`{state: idle / running / waiting-approval, model, permission_mode}`（后两项来自 init 帧，没握过手是 null） |
 | `approval` | **CC 要审批**，带 `requestId` + 工具名 + 入参 |
 | `approval_resolved` | 审批终态：allow / deny / 超时 / 被取消，带 `requestId`——所有标签页同步关弹框 |
 | `rate_limit` | 额度变化推送（← `rate_limit_event`），**不用轮询** |
@@ -79,8 +79,10 @@ API key / Bedrock / Vertex 用户本来就没有订阅额度
 
 **断线补发**：所有事件带 session 级单调递增 `seq`，服务器为每个
 session 保留滚动 buffer（最近 N 条）。重连带 `?since=<seq>` 补发缺口。
-这条必须有——刷新页面不该丢正在流的那半截输出，而 `/history` 补不上它
-（jsonl 落盘有延迟）。
+**不带 `since` = 新打开的页面**：不回放（上一回合的 message 回放是幂等的，
+delta 不是），改为在 state 之后直发当前回合的快照（`seq: 0`，占位消息带
+已累积的文本）——刷新页面不丢正在流的那半截输出，`/history` 补不上它
+（jsonl 落盘有延迟）。浏览器不把 seq 0 记进游标。
 
 `approval` 事件是整个设计里最要紧的一条：前端收到就弹确认框，
 用户点了之后 POST 回 `/approvals/:requestId`。

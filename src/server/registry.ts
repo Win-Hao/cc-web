@@ -28,7 +28,8 @@ import { randomUUID } from 'node:crypto'
 import type { EventEmitter } from 'node:events'
 import type { EnginePool } from '#/engine/pool.js'
 import { diagnoseEngineFailure } from '#/engine/diagnose.js'
-import { frameToWsEvent } from './normalize.js'
+import { LiveTurn } from './message/live.js'
+import type { Message, MessageEvent } from './message/types.js'
 import type { SessionHub } from './hub.js'
 
 export interface EngineLike extends EventEmitter {
@@ -118,6 +119,10 @@ export class SessionRegistry {
   private readonly now: () => number
   /** 每会话最后活跃时间（prompt / 控制请求 / 任意 stdout 帧都算活跃） */
   private readonly lastActivity = new Map<string, number>()
+  /** D7：每个 session 当前回合的归一化状态（占位 / 未完成的 tool_use），回合结束即清空 */
+  private readonly turns = new Map<string, LiveTurn>()
+  /** init 帧带来的 model / permissionMode，随 state 事件一起给浏览器 */
+  private readonly settings = new Map<string, { model: string | null; permission_mode: string | null }>()
 
   constructor(deps: {
     hub: SessionHub
@@ -148,7 +153,47 @@ export class SessionRegistry {
   private setState(sessionId: string, state: SessionState): void {
     if (this.state(sessionId) === state) return
     this.states.set(sessionId, state)
-    this.hub.publish(sessionId, 'state', { state })
+    this.publishState(sessionId)
+  }
+
+  private publishState(sessionId: string): void {
+    this.hub.publish(sessionId, 'state', this.stateData(sessionId))
+  }
+
+  /** state 事件的载荷：状态 + 引擎 init 帧报的 model / permission_mode（没握过手就是 null） */
+  stateData(sessionId: string): { state: SessionState; model: string | null; permission_mode: string | null } {
+    const s = this.settings.get(sessionId)
+    return { state: this.state(sessionId), model: s?.model ?? null, permission_mode: s?.permission_mode ?? null }
+  }
+
+  /** 当前回合进行中的消息（占位带已累积文本）：新标签页订阅时补给它 */
+  snapshot(sessionId: string): Message[] {
+    return this.turns.get(sessionId)?.snapshot() ?? []
+  }
+
+  /** 当前回合还没有结果的 tool_use：/history 据此标 pending 而不是 canceled */
+  openToolUseIds(sessionId: string): Set<string> {
+    return this.turns.get(sessionId)?.openToolUseIds() ?? new Set()
+  }
+
+  private turn(sessionId: string): LiveTurn {
+    let t = this.turns.get(sessionId)
+    if (t === undefined) {
+      t = new LiveTurn(this.now)
+      this.turns.set(sessionId, t)
+    }
+    return t
+  }
+
+  private emitTurnEvents(sessionId: string, events: MessageEvent[]): void {
+    for (const ev of events) {
+      if (ev.event === 'init') {
+        this.settings.set(sessionId, ev.data)
+        this.publishState(sessionId)
+      } else {
+        this.hub.publish(sessionId, ev.event, ev.data)
+      }
+    }
   }
 
   get(sessionId: string): EngineLike | undefined {
@@ -241,8 +286,8 @@ export class SessionRegistry {
       if (this.routeControlResponse(sessionId, frame)) return
       if (this.routeControlRequest(sessionId, frame)) return
       if (this.routeControlCancel(sessionId, frame)) return
-      const mapped = frameToWsEvent(frame)
-      if (mapped !== null) this.hub.publish(sessionId, mapped.event, mapped.data)
+      // D7：原帧不出门 —— LiveTurn 归一化成 message / delta / turn_end，才发 hub
+      this.emitTurnEvents(sessionId, this.turn(sessionId).ingest(frame))
       if (isResultFrame(frame)) this.setState(sessionId, 'idle')
     })
     engine.on('error', (err: Error) => {
@@ -271,6 +316,13 @@ export class SessionRegistry {
         this.pending.delete(sessionId)
       }
       this.cancelAllApprovals(sessionId)
+      // 回合没收到 result 就断了：没结果的 tool_use 判 canceled，占位转终态
+      const turn = this.turns.get(sessionId)
+      if (turn !== undefined) {
+        this.emitTurnEvents(sessionId, turn.abort())
+        this.turns.delete(sessionId)
+      }
+      this.settings.delete(sessionId)
       this.initialized.delete(sessionId)
       this.setState(sessionId, 'idle')
       // 防泄漏（M16）：state 回默认值后表项可删（get 缺省就是 idle）；
@@ -308,6 +360,8 @@ export class SessionRegistry {
     // 先同步占住 running 再 await：ensure() 要 spawn 引擎（几百毫秒），
     // 不占位的话并发的第二个 prompt 也会通过上面的 idle 检查（R7 竞态）
     this.setState(sessionId, 'running')
+    // 提示词占位立刻发给所有标签页；引擎回显（--replay-user-messages）的 user 帧会替换它
+    this.hub.publish(sessionId, 'message', this.turn(sessionId).prompt(text, images))
     try {
       const engine = await this.ensure(sessionId)
       // 图在前文在后（Messages API 的推荐顺序）；纯图不发空 text 块
@@ -322,6 +376,7 @@ export class SessionRegistry {
       })
       this.touch(sessionId)
     } catch (err) {
+      this.turns.delete(sessionId) // 没发出去的回合不留状态
       this.setState(sessionId, 'idle')
       throw err
     }

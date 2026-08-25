@@ -10,19 +10,92 @@ export interface SessionSummary {
   name?: string | null
 }
 
-export interface HistoryMessage {
-  cursor: number
-  type: string | null
-  role: string | null
+/* ── D7：服务器归一化后的消息（src/server/message/types.ts 的镜像）──
+ * 历史和实时是同一个形状；客户端只做 upsert(message) 和 append_delta。 */
+
+export type Role = 'user' | 'assistant'
+
+export interface ImageRef {
+  media_type: string
+  data: string
+}
+
+export type ToolStatus = 'pending' | 'ok' | 'error' | 'canceled'
+
+export interface TextBlock {
+  type: 'text'
+  text: string
+}
+
+export interface ThinkingBlock {
+  type: 'thinking'
+  thinking: string
+  /** 服务器计的思考秒数；历史消息没有 */
+  seconds?: number
+}
+
+export interface ImageBlock {
+  type: 'image'
+  media_type: string
+  data: string
+}
+
+/** tool_use 自带执行状态和结果（tool_result 在服务器配对进来） */
+export interface ToolUseBlock {
+  type: 'tool_use'
+  id: string | null
+  name: string
+  input: unknown
+  status: ToolStatus
+  result: string | null
+  images: ImageRef[]
+  /** 实时归属到这个工具的 subagent 消息数 */
+  sub_count: number
+  /** 新格式 subagent：meta.toolUseId 锚到本工具 */
+  agent: { id: string; label: string } | null
+}
+
+export type Block = TextBlock | ThinkingBlock | ImageBlock | ToolUseBlock
+
+export interface Message {
+  /** upsert 身份：历史行 = uuid；流式占位 = `<message.id>:<index>`；提示词占位 = `prompt:<n>` */
+  key: string
+  uuid: string | null
+  /** 分页游标（只有历史消息带） */
+  cursor?: number
+  role: Role
   text: string | null
   model: string | null
   timestamp: string | null
-  /** 净化后的 content 块，形状对齐实时帧（server history.ts） */
-  content: unknown
-  uuid?: string | null
-  /** 这条消息锚定的 subagent 消息数（M17，只在 >0 时出现） */
+  /** 引擎还在生成：之后会被带 replaces 的最终消息替换 */
+  partial: boolean
+  replaces?: string
+  content: Block[]
+  /** 旧格式 sidechain 锚点：这条消息下挂着 N 条 subagent 消息 */
   sidechain_count?: number
 }
+
+export interface Delta {
+  key: string
+  kind: 'text' | 'thinking'
+  chunk: string
+}
+
+export interface TurnEnd {
+  duration_ms: number | null
+  output_tokens: number | null
+  cost_usd: number | null
+}
+
+/** 客户端本地的错误条目（信封错误 / 引擎 error 事件），不来自服务器消息流 */
+export interface ChatError {
+  key: string
+  role: 'error'
+  text: string
+  timestamp: string
+}
+
+export type ChatItem = Message | ChatError
 
 /** 全文搜索命中（M44，server sessions/search.ts） */
 export interface SearchHit {
@@ -32,13 +105,6 @@ export interface SearchHit {
   snippet: string
   match_count: number
   mtime_ms: number
-}
-
-/** 正在被模型生成的工具调用（M50 流式标签）：start 帧给名字,json 增量拼入参 */
-export interface StreamTool {
-  index: number
-  name: string
-  json: string
 }
 
 /** 当前回合的运行状态（M47 footer）：跑 → 准备中/执行中 + 计时；完 → 已完成 + 统计 */
@@ -56,62 +122,6 @@ export interface HubEvent {
   seq: number
   event: string
   data: unknown
-}
-
-export interface TextSeg {
-  kind: 'text'
-  text: string
-}
-
-export interface ThinkingSeg {
-  kind: 'thinking'
-  text: string
-  /** 本轮实时流计到的思考秒数（M46）；历史消息没有 → 不显示时长 */
-  seconds?: number
-}
-
-export interface ImageRef {
-  mediaType: string
-  data: string
-}
-
-export interface ImageSeg {
-  kind: 'image'
-  image: ImageRef
-}
-
-export interface ToolSeg {
-  kind: 'tool'
-  id: string | null
-  name: string
-  /** 一行摘要：Bash 的 command、Edit 的 file_path…（lib/segments.ts） */
-  summary: string
-  /** 展开看的完整入参（JSON pretty，已截断） */
-  detail: string
-  /** canceled = 回合已结束但 tool_result 一直没来（被中断），不再转 spinner（M52） */
-  status: 'pending' | 'ok' | 'error' | 'canceled'
-  /** 原始入参（M48 工具卡片按 family 取字段：file_path/pattern/url…） */
-  input: unknown
-  result: string | null
-  /** 工具返回的图片（截图类工具，M42） */
-  images: ImageRef[]
-  /** 实时归属到这个工具（Task 等）的 subagent 消息数（M17） */
-  subCount: number
-  /** 新格式 subagent：meta.toolUseId 锚到本工具（M17） */
-  agent: { id: string; label: string } | null
-}
-
-export type Segment = TextSeg | ThinkingSeg | ImageSeg | ToolSeg
-
-export interface ChatMsg {
-  key: string
-  role: 'user' | 'assistant' | 'error'
-  /** 消息时刻（epoch ms）：历史取 jsonl timestamp，实时取到达时刻。算「已工作 Ns」用（M49） */
-  ts: number | null
-  segments: Segment[]
-  meta: string | null
-  /** 这条消息是 subagent 的锚点：uuid 用来拉 /sidechains/:uuid（M17） */
-  sidechain: { uuid: string; count: number } | null
 }
 
 export interface Approval {

@@ -1,0 +1,310 @@
+[
+  {
+    "event": "init",
+    "data": {
+      "model": "claude-fable-5",
+      "permission_mode": "default"
+    }
+  },
+  {
+    "event": "message",
+    "data": {
+      "key": "8cf65310-b991-4105-af1e-0f5118c5bb2f",
+      "uuid": "8cf65310-b991-4105-af1e-0f5118c5bb2f",
+      "role": "user",
+      "text": "Use the Read tool to read the file hello.txt in the current directory, then reply with exactly its contents and nothing else.",
+      "model": null,
+      "timestamp": "2026-08-25T02:08:00.012Z",
+      "partial": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "Use the Read tool to read the file hello.txt in the current directory, then reply with exactly its contents and nothing else."
+        }
+      ]
+    }
+  },
+  {
+    "event": "message",
+    "data": {
+      "key": "msg_011CeNeicX7RWVCwi7o2Vtxy:0",
+      "uuid": null,
+      "role": "assistant",
+      "text": null,
+      "model": "claude-fable-5",
+      "timestamp": "2023-11-14T22:13:20.250Z",
+      "partial": true,
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_01RjzLVnQV9ycNwjGSoBR5AM",
+          "name": "Read",
+          "input": {},
+          "status": "pending",
+          "result": null,
+          "images": [],
+          "sub_count": 0,
+          "agent": null
+        }
+      ]
+    }
+  },
+  {
+    "event": "message",
+    "data": {
+      "key": "msg_011CeNeicX7RWVCwi7o2Vtxy:0",
+      "uuid": null,
+      "role": "assistant",
+      "text": null,
+      "model": "claude-fable-5",
+      "timestamp": "2023-11-14T22:13:20.250Z",
+      "partial": true,
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_01RjzLVnQV9ycNwjGSoBR5AM",
+          "name": "Read",
+          "input": {
+            "file_path": "/private/var/folders/lt/bbmbs8451cnc95v0rcq"
+          },
+          "status": "pending",
+          "result": null,
+          "images": [],
+          "sub_count": 0,
+          "agent": null
+        }
+      ]
+    }
+  },
+  {
+    "event": "message",
+    "data": {
+      "key": "msg_011CeNeicX7RWVCwi7o2Vtxy:0",
+      "uuid": null,
+      "role": "assistant",
+      "text": null,
+      "model": "claude-fable-5",
+      "timestamp": "2023-11-14T22:13:20.250Z",
+      "partial": true,
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_01RjzLVnQV9ycNwjGSoBR5AM",
+          "name": "Read",
+          "input": {
+            "file_path": "/private/var/folders/lt/bbmbs8451cnc95v0rcqnhsbw0000gn/T/cc-web-probe-mvtF8l/hello.txt"
+          },
+          "status": "pending",
+          "result": null,
+          "images": [],
+          "sub_count": 0,
+          "agent": null
+        }
+      ]
+    }
+  },
+  {
+    "event": "message",
+    "data": {
+      "key": "msg_011CeNeicX7RWVCwi7o2Vtxy:0",
+      "uuid": null,
+      "role": "assistant",
+      "text": null,
+      "model": "claude-fable-5",
+      "timestamp": "2023-11-14T22:13:20.250Z",
+      "partial": true,
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_01RjzLVnQV9ycNwjGSoBR5AM",
+          "name": "Read",
+          "input": {
+            "file_path": "/private/var/folders/lt/bbmbs8451cnc95v0rcqnhsbw0000gn/T/cc-web-probe-mvtF8l/hello.txt"
+          },
+          "status": "pending",
+          "result": null,
+          "images": [],
+          "sub_count": 0,
+          "agent": null
+        }
+      ]
+    }
+  },
+  {
+    "event": "message",
+    "data": {
+      "key": "d8bbb2b0-aad7-4dcd-a8b7-b379d7c3c514",
+      "uuid": "d8bbb2b0-aad7-4dcd-a8b7-b379d7c3c514",
+      "role": "assistant",
+      "text": null,
+      "model": "claude-fable-5",
+      "timestamp": "2026-08-25T02:08:06.484Z",
+      "partial": false,
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_01RjzLVnQV9ycNwjGSoBR5AM",
+          "name": "Read",
+          "input": {
+            "file_path": "/private/var/folders/lt/bbmbs8451cnc95v0rcqnhsbw0000gn/T/cc-web-probe-mvtF8l/hello.txt"
+          },
+          "status": "pending",
+          "result": null,
+          "images": [],
+          "sub_count": 0,
+          "agent": null
+        }
+      ],
+      "replaces": "msg_011CeNeicX7RWVCwi7o2Vtxy:0"
+    }
+  },
+  {
+    "event": "rate_limit",
+    "data": {
+      "type": "rate_limit_event",
+      "rate_limit_info": {
+        "status": "allowed",
+        "resetsAt": 1787625600,
+        "rateLimitType": "five_hour",
+        "overageStatus": "rejected",
+        "overageDisabledReason": "org_level_disabled",
+        "isUsingOverage": false,
+        "unifiedWindows": {
+          "five_hour": {
+            "utilization": 0.27,
+            "resetsAt": 1787625600
+          },
+          "seven_day": {
+            "utilization": 0.18,
+            "resetsAt": 1788076800
+          },
+          "seven_day_overage_included": {
+            "utilization": 0.28,
+            "resetsAt": 1788076800
+          }
+        }
+      },
+      "uuid": "8884c59d-8fc5-408e-976a-7d2cf2217c37",
+      "session_id": "bd1ece06-ed67-4a74-8d03-c161d1291055"
+    }
+  },
+  {
+    "event": "message",
+    "data": {
+      "key": "d8bbb2b0-aad7-4dcd-a8b7-b379d7c3c514",
+      "uuid": "d8bbb2b0-aad7-4dcd-a8b7-b379d7c3c514",
+      "role": "assistant",
+      "text": null,
+      "model": "claude-fable-5",
+      "timestamp": "2026-08-25T02:08:06.484Z",
+      "partial": false,
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_01RjzLVnQV9ycNwjGSoBR5AM",
+          "name": "Read",
+          "input": {
+            "file_path": "/private/var/folders/lt/bbmbs8451cnc95v0rcqnhsbw0000gn/T/cc-web-probe-mvtF8l/hello.txt"
+          },
+          "status": "ok",
+          "result": "1\tcc-web probe says hello\n2\t",
+          "images": [],
+          "sub_count": 0,
+          "agent": null
+        }
+      ],
+      "replaces": "msg_011CeNeicX7RWVCwi7o2Vtxy:0"
+    }
+  },
+  {
+    "event": "message",
+    "data": {
+      "key": "msg_011CeNeiyXQRMXovvxpKKMqo:0",
+      "uuid": null,
+      "role": "assistant",
+      "text": null,
+      "model": "claude-fable-5",
+      "timestamp": "2023-11-14T22:13:20.500Z",
+      "partial": true,
+      "content": [
+        {
+          "type": "text",
+          "text": ""
+        }
+      ]
+    }
+  },
+  {
+    "event": "delta",
+    "data": {
+      "key": "msg_011CeNeiyXQRMXovvxpKKMqo:0",
+      "kind": "text",
+      "chunk": "c"
+    }
+  },
+  {
+    "event": "delta",
+    "data": {
+      "key": "msg_011CeNeiyXQRMXovvxpKKMqo:0",
+      "kind": "text",
+      "chunk": "c-web probe says hello"
+    }
+  },
+  {
+    "event": "message",
+    "data": {
+      "key": "ec36cf07-dfca-4ab6-ba04-2d3654e7a5de",
+      "uuid": "ec36cf07-dfca-4ab6-ba04-2d3654e7a5de",
+      "role": "assistant",
+      "text": "cc-web probe says hello",
+      "model": "claude-fable-5",
+      "timestamp": "2026-08-25T02:08:09.145Z",
+      "partial": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "cc-web probe says hello"
+        }
+      ],
+      "replaces": "msg_011CeNeiyXQRMXovvxpKKMqo:0"
+    }
+  },
+  {
+    "event": "rate_limit",
+    "data": {
+      "type": "rate_limit_event",
+      "rate_limit_info": {
+        "status": "allowed",
+        "resetsAt": 1787625600,
+        "rateLimitType": "five_hour",
+        "overageStatus": "rejected",
+        "overageDisabledReason": "org_level_disabled",
+        "isUsingOverage": false,
+        "unifiedWindows": {
+          "five_hour": {
+            "utilization": 0.28,
+            "resetsAt": 1787625600
+          },
+          "seven_day": {
+            "utilization": 0.18,
+            "resetsAt": 1788076800
+          },
+          "seven_day_overage_included": {
+            "utilization": 0.28,
+            "resetsAt": 1788076800
+          }
+        }
+      },
+      "uuid": "dde7ba87-2cfd-46cf-9516-590de8714871",
+      "session_id": "bd1ece06-ed67-4a74-8d03-c161d1291055"
+    }
+  },
+  {
+    "event": "turn_end",
+    "data": {
+      "duration_ms": 9152,
+      "output_tokens": 117,
+      "cost_usd": 0.349478
+    }
+  }
+]
