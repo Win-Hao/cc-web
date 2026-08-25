@@ -5,6 +5,7 @@
  *   1. replay ?since=<seq> 之后的留存事件（断线补发）
  *   2. subscribe —— 之后的 live 事件直接推
  *   3. publish 当前 state —— 新客户端一定能收到，其它标签页也同步
+ *   4. 直发当前回合的 snapshot（D7）—— 中途打开的页面也有半截消息
  *
  * 鉴权（子协议 cc-web.bearer.<token>）在 M8 加，现在只认连接形状。
  */
@@ -58,12 +59,18 @@ export function attachWebSocket(server: Server, deps: WsDeps): void {
       }
     }
     wss.handleUpgrade(req, socket, head, (ws) => {
-      const sinceRaw = Number(url.searchParams.get('since') ?? '0')
-      const since = Number.isFinite(sinceRaw) && sinceRaw > 0 ? sinceRaw : 0
-
-      for (const e of deps.hub.replay(session, since)) send(ws, e)
+      // 带 since = 断线重连：补发缺口。不带 = 新打开的页面：历史走 /history、
+      // 进行中的回合走下面的 snapshot，不回放留存（回放会把上一回合再发一遍；
+      // message 是 upsert 无所谓，delta 不是）
+      const sinceRaw = url.searchParams.get('since')
+      if (sinceRaw !== null) {
+        const since = Number(sinceRaw)
+        for (const e of deps.hub.replay(session, Number.isFinite(since) && since > 0 ? since : 0)) send(ws, e)
+      }
       const unsubscribe = deps.hub.subscribe(session, (e) => send(ws, e))
-      deps.hub.publish(session, 'state', { state: deps.registry.state(session) })
+      deps.hub.publish(session, 'state', deps.registry.stateData(session))
+      // D7：当前回合的半截消息只给这个连接（seq 0：不进 since 游标）
+      for (const m of deps.registry.snapshot(session)) send(ws, { seq: 0, event: 'message', data: m })
 
       ws.on('close', unsubscribe)
       ws.on('error', unsubscribe)

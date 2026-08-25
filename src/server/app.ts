@@ -23,7 +23,7 @@ import { findSessionFile } from '#/sessions/find.js'
 import { parseSessionFile } from '#/sessions/parse.js'
 import { aggregateSessionUsage } from '#/usage/aggregate.js'
 import { findSubagentFile, listSubagents } from '#/sessions/subagents.js'
-import { normalizeMessage, paginate } from './history.js'
+import { normalizeHistory, paginate } from './message/index.js'
 import { SessionBusyError, ControlRequestError, ApprovalExpiredError } from './registry.js'
 import type { PromptImage, SessionRegistry } from './registry.js'
 import { bearerAuth } from '#/auth/middleware.js'
@@ -359,29 +359,20 @@ export function createApp(deps: AppDeps) {
     if (file === null) return c.json(fail(40401, 'session not found'))
     const parsed = await parseSessionFile(file)
     const lines: string[] = []
-    for (const e of parsed.mainline) {
-      const msg = e.message as { role?: string; content?: unknown } | null
-      if (msg === null) continue
-      const role = msg.role === 'user' ? '用户' : '助手'
+    for (const m of normalizeHistory(parsed.mainline)) {
+      const role = m.role === 'user' ? '用户' : '助手'
       const parts: string[] = []
-      const content = msg.content
-      if (typeof content === 'string') {
-        if (content.trim() !== '') parts.push(content)
-      } else if (Array.isArray(content)) {
-        for (const b of content) {
-          if (typeof b !== 'object' || b === null) continue
-          const blk = b as Record<string, unknown>
-          if (blk.type === 'text' && typeof blk.text === 'string' && blk.text !== '') parts.push(blk.text)
-          else if (blk.type === 'tool_use' && typeof blk.name === 'string') {
-            const input = blk.input as Record<string, unknown> | undefined
-            const hint =
-              typeof input?.description === 'string' ? input.description
-              : typeof input?.command === 'string' ? input.command
-              : typeof input?.file_path === 'string' ? input.file_path
-              : ''
-            parts.push(`> 🔧 ${blk.name}${hint !== '' ? `：${String(hint).slice(0, 120)}` : ''}`)
-          } else if (blk.type === 'image') parts.push('> [图片]')
-        }
+      for (const b of m.content) {
+        if (b.type === 'text' && b.text !== '') parts.push(b.text)
+        else if (b.type === 'tool_use') {
+          const input = b.input as Record<string, unknown> | null | undefined
+          const hint =
+            typeof input?.description === 'string' ? input.description
+            : typeof input?.command === 'string' ? input.command
+            : typeof input?.file_path === 'string' ? input.file_path
+            : ''
+          parts.push(`> 🔧 ${b.name}${hint !== '' ? `：${String(hint).slice(0, 120)}` : ''}`)
+        } else if (b.type === 'image') parts.push('> [图片]')
       }
       if (parts.length === 0) continue
       lines.push(`## ${role}`, '', ...parts, '')
@@ -435,17 +426,18 @@ export function createApp(deps: AppDeps) {
     const beforeRaw = c.req.query('before')
     const before = beforeRaw === undefined ? undefined : Number(beforeRaw)
 
-    const page = paginate(parsed.mainline, {
+    // D7：全量 mainline 上配对 tool_result、挂 sidechain / subagent，再切页；
+    // 当前回合还没结果的 tool_use 标 pending（registry 知道），其余没结果的 canceled
+    const messages = normalizeHistory(parsed.mainline, {
+      sidechains: parsed.sidechains,
+      subagents: await listSubagents(file),
+      ...(deps.registry !== undefined ? { openToolUseIds: deps.registry.openToolUseIds(c.req.param('id')) } : {}),
+    })
+    const page = paginate(messages, {
       limit,
       ...(before !== undefined && Number.isFinite(before) ? { before } : {}),
     })
-    // M17：主线消息若是 subagent 的锚点，带上计数 —— 前端据此显示
-    // 「子代理 · N 条」，点开再拉 /sidechains/:uuid
-    const messages = page.messages.map((m) => {
-      const count = m.uuid !== null ? (parsed.sidechains[m.uuid]?.length ?? 0) : 0
-      return count > 0 ? { ...m, sidechain_count: count } : m
-    })
-    return c.json(ok({ ...page, messages }))
+    return c.json(ok(page))
   })
 
   /** M17（新格式）：会话的 subagent 列表 —— toolUseId 锚到工具行 */
@@ -463,9 +455,7 @@ export function createApp(deps: AppDeps) {
     if (agentFile === null) return c.json(ok({ messages: [] }))
     const parsed = await parseSessionFile(agentFile)
     // agent 文件里全是 isSidechain 行，mainline 为空 —— 按行序给 entries
-    const messages = parsed.entries
-      .filter((e) => e.type === 'user' || e.type === 'assistant')
-      .map(normalizeMessage)
+    const messages = normalizeHistory(parsed.entries.filter((e) => e.type === 'user' || e.type === 'assistant'))
     return c.json(ok({ messages }))
   })
 
@@ -477,7 +467,7 @@ export function createApp(deps: AppDeps) {
     if (!/^[a-zA-Z0-9-]+$/.test(uuid)) return c.json(ok({ messages: [] }))
     const parsed = await parseSessionFile(file)
     const group = parsed.sidechains[uuid] ?? []
-    return c.json(ok({ messages: group.map(normalizeMessage) }))
+    return c.json(ok({ messages: normalizeHistory(group) }))
   })
 
   app.post('/api/v1/sessions/:id/prompt', async (c) => {

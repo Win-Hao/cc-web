@@ -15,6 +15,8 @@ export interface ClaudeCapabilities {
   allowDangerousSkip: boolean
   /** --session-id：服务器发 uuid 新建会话 */
   sessionId: boolean
+  /** --replay-user-messages：引擎把 stdin 的 user 消息带 uuid 回显（D7：提示词气泡拿真实身份） */
+  replayUserMessages: boolean
 }
 
 /** README 基线（2.1.241）：探测失败时的假设 */
@@ -22,6 +24,7 @@ export const BASELINE_CAPABILITIES: ClaudeCapabilities = {
   partialMessages: true,
   allowDangerousSkip: true,
   sessionId: true,
+  replayUserMessages: true,
 }
 
 export function parseHelpCapabilities(helpText: string): ClaudeCapabilities {
@@ -29,6 +32,7 @@ export function parseHelpCapabilities(helpText: string): ClaudeCapabilities {
     partialMessages: helpText.includes('--include-partial-messages'),
     allowDangerousSkip: helpText.includes('--allow-dangerously-skip-permissions'),
     sessionId: helpText.includes('--session-id'),
+    replayUserMessages: helpText.includes('--replay-user-messages'),
   }
 }
 

@@ -27,6 +27,7 @@ claude -p --verbose \
   --input-format stream-json \
   --output-format stream-json \
   --include-partial-messages \
+  --replay-user-messages \
   --resume <session-id>
 ```
 
@@ -37,7 +38,7 @@ claude -p --verbose \
 | `--input-format stream-json` | 实时流式输入 |
 | `--output-format stream-json` | 实时流式输出 |
 | `--include-partial-messages` | 流式增量帧。WS 的 `delta` 事件靠它；不加只有完整消息，没有「打字机」效果 |
-| `--replay-user-messages` | 把收到的 stdin 回显到 stdout 确认（可选，调试好用） |
+| `--replay-user-messages` | 把收到的 stdin user 消息回显到 stdout（帧带 `isReplay: true` + **与 jsonl 同一个 uuid**，2.1.243 实测）。D7 起必传：服务器用它把提示词占位换成真实消息，能力探测缺它则占位不被替换、功能不损 |
 | `-r, --resume <id>` | 按 session id 续接 |
 | `--session-id <uuid>` | 指定新会话 id（必须合法 UUID） |
 | `--fork-session` | resume 时另开新 id。**新 id 从首个 stdout 帧的顶层 `session_id` 读**（M55 真机实测：spawn 后立即有 system/hook_started 之类的帧带新 id，不用等 init）；新会话 jsonl 到首条消息才落盘 |

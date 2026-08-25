@@ -1,0 +1,118 @@
+[
+  {
+    "event": "init",
+    "data": {
+      "model": "claude-fable-5",
+      "permission_mode": "default"
+    }
+  },
+  {
+    "event": "message",
+    "data": {
+      "key": "429c82de-a768-405f-b06d-a4223ed713a1",
+      "uuid": "429c82de-a768-405f-b06d-a4223ed713a1",
+      "role": "user",
+      "text": "Reply with exactly: hi",
+      "model": null,
+      "timestamp": "2026-08-25T02:07:50.432Z",
+      "partial": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "Reply with exactly: hi"
+        }
+      ]
+    }
+  },
+  {
+    "event": "message",
+    "data": {
+      "key": "msg_011CeNei1Fova7DS66nMFc8v:0",
+      "uuid": null,
+      "role": "assistant",
+      "text": null,
+      "model": "claude-fable-5",
+      "timestamp": "2023-11-14T22:13:20.250Z",
+      "partial": true,
+      "content": [
+        {
+          "type": "text",
+          "text": ""
+        }
+      ]
+    }
+  },
+  {
+    "event": "delta",
+    "data": {
+      "key": "msg_011CeNei1Fova7DS66nMFc8v:0",
+      "kind": "text",
+      "chunk": "h"
+    }
+  },
+  {
+    "event": "delta",
+    "data": {
+      "key": "msg_011CeNei1Fova7DS66nMFc8v:0",
+      "kind": "text",
+      "chunk": "i"
+    }
+  },
+  {
+    "event": "message",
+    "data": {
+      "key": "5dfd12f0-2eb6-4343-a0b1-1c5600defc09",
+      "uuid": "5dfd12f0-2eb6-4343-a0b1-1c5600defc09",
+      "role": "assistant",
+      "text": "hi",
+      "model": "claude-fable-5",
+      "timestamp": "2026-08-25T02:07:56.590Z",
+      "partial": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "hi"
+        }
+      ],
+      "replaces": "msg_011CeNei1Fova7DS66nMFc8v:0"
+    }
+  },
+  {
+    "event": "rate_limit",
+    "data": {
+      "type": "rate_limit_event",
+      "rate_limit_info": {
+        "status": "allowed",
+        "resetsAt": 1787625600,
+        "rateLimitType": "five_hour",
+        "overageStatus": "rejected",
+        "overageDisabledReason": "org_level_disabled",
+        "isUsingOverage": false,
+        "unifiedWindows": {
+          "five_hour": {
+            "utilization": 0.27,
+            "resetsAt": 1787625600
+          },
+          "seven_day": {
+            "utilization": 0.18,
+            "resetsAt": 1788076800
+          },
+          "seven_day_overage_included": {
+            "utilization": 0.28,
+            "resetsAt": 1788076800
+          }
+        }
+      },
+      "uuid": "a5bbcd45-a45e-4965-9eef-7dd65f675763",
+      "session_id": "7cc30de7-9da3-403a-a600-1ae3725ecc35"
+    }
+  },
+  {
+    "event": "turn_end",
+    "data": {
+      "duration_ms": 6429,
+      "output_tokens": 4,
+      "cost_usd": 0.308919
+    }
+  }
+]

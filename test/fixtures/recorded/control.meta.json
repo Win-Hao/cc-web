@@ -1,6 +1,6 @@
 {
-  "claude_version": "2.1.241 (Claude Code)",
-  "recorded_at": "2026-08-24T07:54:58.353Z",
+  "claude_version": "2.1.243 (Claude Code)",
+  "recorded_at": "2026-08-25T02:04:10.596Z",
   "sent": [
     "{\"type\":\"control_request\",\"request_id\":\"probe-0\",\"request\":{\"subtype\":\"initialize\"}}",
     "{\"type\":\"control_request\",\"request_id\":\"probe-1\",\"request\":{\"subtype\":\"list_models\"}}",

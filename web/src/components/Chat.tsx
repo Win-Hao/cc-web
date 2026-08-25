@@ -1,12 +1,14 @@
 /**
  * 对话流：白底阅读面，内容列居中 max-w-[760px]。
- * 用户消息 = 右对齐软 accent 气泡；助手消息 = 文本段 + 工具行交错。
+ * 用户消息 = 右对齐软 accent 气泡；助手消息 = 文本块 + 工具行交错。
+ * 吃的是服务器归一化好的 Message（D7）：partial 的消息就是正在流的那条，
+ * 和最终消息同一套渲染，只多一个光标 / shimmer。
  */
 import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ArrowDown, Ban, Check, ChevronRight, LoaderCircle, Sparkles, X } from 'lucide-react'
-import type { ChatMsg, ImageRef, StreamTool, ToolSeg, TurnStatus } from '../types'
+import type { ChatItem, ImageRef, Message, ToolUseBlock, TurnStatus } from '../types'
 import { formatElapsedMs } from '../lib/format'
-import { textOfSegments } from '../lib/segments'
+import { textOf, toolDetail, toolSummary } from '../lib/blocks'
 import { Markdown } from './Markdown'
 import { SidechainBlock } from './SidechainBlock'
 import { cn } from '@/lib/utils'
@@ -21,7 +23,7 @@ function Thumb({ image }: { image: ImageRef }) {
     <img
       alt=""
       className="max-h-72 max-w-full cursor-zoom-in rounded-lg border object-contain transition-opacity hover:opacity-90"
-      src={`data:${image.mediaType};base64,${image.data}`}
+      src={`data:${image.media_type};base64,${image.data}`}
       onClick={(e) => {
         e.stopPropagation()
         open(image)
@@ -47,7 +49,7 @@ function Lightbox({ image, onClose }: { image: ImageRef; onClose: () => void }) 
       <img
         alt=""
         className="max-h-full max-w-full rounded-lg object-contain shadow-2xl"
-        src={`data:${image.mediaType};base64,${image.data}`}
+        src={`data:${image.media_type};base64,${image.data}`}
       />
     </div>
   )
@@ -147,28 +149,28 @@ const FAMILY_KEY: Record<Exclude<ToolFamily, 'other'>, 'toolRun' | 'toolRead' | 
   search: 'toolSearch', fetch: 'toolFetch', todo: 'toolTodos',
 }
 
-function familyTitle(seg: ToolSeg): string {
-  const fam = toolFamily(seg.name)
+function familyTitle(tool: ToolUseBlock): string {
+  const fam = toolFamily(tool.name)
   if (fam !== 'other') return t(FAMILY_KEY[fam])
   // MCP 工具名去前缀、下划线转空格:mcp__media__generate → media generate
-  return seg.name.startsWith('mcp__') ? seg.name.slice(5).replace(/__/g, ' ').replace(/_/g, ' ') : seg.name
+  return tool.name.startsWith('mcp__') ? tool.name.slice(5).replace(/__/g, ' ').replace(/_/g, ' ') : tool.name
 }
 
 /** family 相关的元信息：文件名 / pattern / url / 命令…；带结果统计 */
-function toolMeta(seg: ToolSeg): { main: string; stat: string; italic: boolean } {
-  const fam = toolFamily(seg.name)
-  const i = (typeof seg.input === 'object' && seg.input !== null ? seg.input : {}) as Record<string, unknown>
+function toolMeta(tool: ToolUseBlock): { main: string; stat: string; italic: boolean } {
+  const fam = toolFamily(tool.name)
+  const i = (typeof tool.input === 'object' && tool.input !== null ? tool.input : {}) as Record<string, unknown>
   const str = (k: string): string => (typeof i[k] === 'string' ? (i[k] as string) : '')
   const base = (path: string): string => path.split('/').pop() ?? path
-  const lines = seg.result === null || seg.result === '' ? 0 : seg.result.split('\n').length
+  const lines = tool.result === null || tool.result === '' ? 0 : tool.result.split('\n').length
   if (fam === 'read') {
-    return { main: base(str('file_path') || str('path')), stat: seg.status === 'ok' && lines > 0 ? t('toolLines', { n: lines }) : '', italic: false }
+    return { main: base(str('file_path') || str('path')), stat: tool.status === 'ok' && lines > 0 ? t('toolLines', { n: lines }) : '', italic: false }
   }
   if (fam === 'edit' || fam === 'write') return { main: base(str('file_path') || str('path')), stat: '', italic: false }
   if (fam === 'search') {
     const main = str('pattern') || str('query')
     const path = str('path')
-    return { main: path !== '' ? `${main}  ${base(path)}` : main, stat: seg.status === 'ok' && lines > 0 ? t('toolResults', { n: lines }) : '', italic: false }
+    return { main: path !== '' ? `${main}  ${base(path)}` : main, stat: tool.status === 'ok' && lines > 0 ? t('toolResults', { n: lines }) : '', italic: false }
   }
   if (fam === 'fetch') return { main: str('url'), stat: '', italic: false }
   if (fam === 'run') {
@@ -178,33 +180,10 @@ function toolMeta(seg: ToolSeg): { main: string; stat: string; italic: boolean }
   }
   const desc = str('description')
   if (desc !== '') return { main: desc, stat: '', italic: true }
-  return { main: seg.summary, stat: '', italic: false }
+  return { main: toolSummary(tool.input), stat: '', italic: false }
 }
 
-/** 流式工具占位（M50）：入参 JSON 还没停,能解析多少解析多少 */
-function partialToolInput(json: string): Record<string, unknown> {
-  try {
-    return JSON.parse(json) as Record<string, unknown>
-  } catch {
-    /* 还没闭合,退回逐字段抽取 */
-  }
-  const out: Record<string, unknown> = {}
-  for (const k of ['description', 'command', 'file_path', 'pattern', 'url', 'query', 'path', 'skill', 'prompt']) {
-    const m = new RegExp(`"${k}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)`).exec(json)
-    if (m !== null) out[k] = m[1]!.replace(/\\n/g, ' ').replace(/\\"/g, '"')
-  }
-  return out
-}
-
-function streamToolSeg(st: StreamTool): ToolSeg {
-  return {
-    kind: 'tool', id: null, name: st.name, summary: '', detail: '',
-    input: partialToolInput(st.json), status: 'pending', result: null,
-    images: [], subCount: 0, agent: null,
-  }
-}
-
-function StatusTile({ status, pending }: { status: ToolSeg['status']; pending: boolean }) {
+function StatusTile({ status, pending }: { status: ToolUseBlock['status']; pending: boolean }) {
   return (
     <span
       className={cn(
@@ -232,9 +211,9 @@ function StatusTile({ status, pending }: { status: ToolSeg['status']; pending: b
 }
 
 /** TodoWrite 专属清单卡（M48）：进行中高亮，收起时显示当前项 */
-function TodoCard({ seg }: { seg: ToolSeg }) {
+function TodoCard({ tool }: { tool: ToolUseBlock }) {
   const todos = (() => {
-    const i = (typeof seg.input === 'object' && seg.input !== null ? seg.input : {}) as Record<string, unknown>
+    const i = (typeof tool.input === 'object' && tool.input !== null ? tool.input : {}) as Record<string, unknown>
     if (!Array.isArray(i.todos)) return []
     return i.todos.filter((x): x is { content?: string; status?: string; activeForm?: string } =>
       typeof x === 'object' && x !== null,
@@ -243,7 +222,7 @@ function TodoCard({ seg }: { seg: ToolSeg }) {
   const hasActive = todos.some((td) => td.status === 'in_progress' || td.status === 'pending')
   const [override, setOverride] = useState<boolean | null>(null)
   const open = override ?? hasActive
-  if (todos.length === 0) return <PlainToolCard seg={seg} />
+  if (todos.length === 0) return <PlainToolCard tool={tool} />
   const current = todos.find((td) => td.status === 'in_progress')
   const done = todos.filter((td) => td.status === 'completed' || td.status === 'in_progress').length
   return (
@@ -252,7 +231,7 @@ function TodoCard({ seg }: { seg: ToolSeg }) {
         className="flex w-full cursor-pointer items-center gap-2 px-2.5 py-1.5 text-left text-[13px] select-none hover:bg-sidebar-accent"
         onClick={() => setOverride(!open)}
       >
-        <StatusTile pending={seg.status === 'pending'} status={seg.status} />
+        <StatusTile pending={tool.status === 'pending'} status={tool.status} />
         <span className="shrink-0 text-[11px] font-medium tracking-wide text-foreground uppercase">{t('toolTodos')}</span>
         <span className="shrink-0 text-[11px] text-muted-foreground tabular-nums">{done}/{todos.length}</span>
         {!open && current !== undefined && (
@@ -297,12 +276,12 @@ function TodoCard({ seg }: { seg: ToolSeg }) {
 }
 
 /** 单个工具卡：动词标题 + 元信息 + 统计；展开看入参/输出/截图 */
-function PlainToolCard({ seg }: { seg: ToolSeg }) {
+function PlainToolCard({ tool }: { tool: ToolUseBlock }) {
   const [open, setOpen] = useState(false)
-  const pending = seg.status === 'pending'
-  const meta = toolMeta(seg)
-  const expandable =
-    (seg.detail !== '' && seg.detail !== '{}') || (seg.result !== null && seg.result !== '') || seg.images.length > 0
+  const pending = tool.status === 'pending'
+  const meta = toolMeta(tool)
+  const detail = toolDetail(tool.input)
+  const expandable = detail !== '' || (tool.result !== null && tool.result !== '') || tool.images.length > 0
   return (
     <div className="cc-tool-row mt-2">
       <button
@@ -312,29 +291,29 @@ function PlainToolCard({ seg }: { seg: ToolSeg }) {
         )}
         onClick={() => expandable && setOpen((o) => !o)}
       >
-        <StatusTile pending={pending} status={seg.status} />
+        <StatusTile pending={pending} status={tool.status} />
         <span
           className={cn(
             'shrink-0 text-[11px] font-medium tracking-wide text-foreground',
-            !seg.name.startsWith('mcp__') && 'uppercase',
+            !tool.name.startsWith('mcp__') && 'uppercase',
             pending && 'shimmer-text',
           )}
         >
-          {familyTitle(seg)}
+          {familyTitle(tool)}
         </span>
         {meta.main !== '' && (
           <span
             className={cn(
               'min-w-0 flex-1 truncate text-xs text-muted-foreground',
-              meta.italic ? 'italic' : toolFamily(seg.name) === 'run' && 'font-mono',
+              meta.italic ? 'italic' : toolFamily(tool.name) === 'run' && 'font-mono',
             )}
           >
             {meta.main}
           </span>
         )}
-        {seg.subCount > 0 && (
+        {tool.sub_count > 0 && (
           <span className="shrink-0 rounded-full bg-accent px-2 text-xs text-accent-foreground">
-            {t('subagentBadge', { n: seg.subCount })}
+            {t('subagentBadge', { n: tool.sub_count })}
           </span>
         )}
         {meta.stat !== '' && <span className="ml-auto shrink-0 text-[11px] text-faint tabular-nums">{meta.stat}</span>}
@@ -345,20 +324,20 @@ function PlainToolCard({ seg }: { seg: ToolSeg }) {
       <div className={cn('cc-collapsible', open && 'open')}>
         <div>
           <div className="mt-1 ml-8 flex flex-col gap-1.5 overflow-hidden rounded-lg border">
-            {seg.detail !== '' && seg.detail !== '{}' && (
-              <pre className="max-h-60 overflow-auto bg-sunken px-2.5 py-2 font-mono text-xs leading-relaxed break-words whitespace-pre-wrap">{seg.detail}</pre>
+            {detail !== '' && (
+              <pre className="max-h-60 overflow-auto bg-sunken px-2.5 py-2 font-mono text-xs leading-relaxed break-words whitespace-pre-wrap">{detail}</pre>
             )}
-            {seg.result !== null && seg.result !== '' && (
+            {tool.result !== null && tool.result !== '' && (
               <pre
                 className={cn(
                   'max-h-60 overflow-auto border-t bg-sunken px-2.5 py-2 font-mono text-xs leading-relaxed break-words whitespace-pre-wrap first:border-t-0',
-                  seg.status === 'error' && 'text-destructive',
+                  tool.status === 'error' && 'text-destructive',
                 )}
-              >{seg.result}</pre>
+              >{tool.result}</pre>
             )}
-            {seg.images.length > 0 && (
+            {tool.images.length > 0 && (
               <div className="flex flex-wrap gap-2 border-t bg-sunken px-2.5 py-2 first:border-t-0">
-                {seg.images.map((img, i) => (
+                {tool.images.map((img, i) => (
                   <Thumb image={img} key={i} />
                 ))}
               </div>
@@ -370,18 +349,18 @@ function PlainToolCard({ seg }: { seg: ToolSeg }) {
   )
 }
 
-function ToolRow({ seg }: { seg: ToolSeg }) {
-  if (toolFamily(seg.name) === 'todo') return <TodoCard seg={seg} />
-  return <PlainToolCard seg={seg} />
+function ToolRow({ tool }: { tool: ToolUseBlock }) {
+  if (toolFamily(tool.name) === 'todo') return <TodoCard tool={tool} />
+  return <PlainToolCard tool={tool} />
 }
 
 /** 同族分组卡（M48）：「搜索 ×3, 完成」，运行中 shimmer，展开看每个调用 */
-function ToolGroupCard({ segs, children }: { segs: ToolSeg[]; children: React.ReactNode }) {
+function ToolGroupCard({ tools, children }: { tools: ToolUseBlock[]; children: React.ReactNode }) {
   const [open, setOpen] = useState(false)
-  const running = segs.some((sg) => sg.status === 'pending')
-  const hasError = segs.some((sg) => sg.status === 'error')
-  const hasCanceled = segs.some((sg) => sg.status === 'canceled')
-  const verb = familyTitle(segs[0]!)
+  const running = tools.some((tl) => tl.status === 'pending')
+  const hasError = tools.some((tl) => tl.status === 'error')
+  const hasCanceled = tools.some((tl) => tl.status === 'canceled')
+  const verb = familyTitle(tools[0]!)
   const tail = hasError
     ? t('toolError')
     : running
@@ -397,7 +376,7 @@ function ToolGroupCard({ segs, children }: { segs: ToolSeg[]; children: React.Re
       >
         <StatusTile pending={running} status={hasError ? 'error' : hasCanceled ? 'canceled' : 'ok'} />
         <span className={cn('min-w-0 flex-1 truncate font-medium text-muted-foreground', running && 'shimmer-text')}>
-          {`${verb} ×${segs.length}, ${tail}`}
+          {`${verb} ×${tools.length}, ${tail}`}
         </span>
         <ChevronRight className={cn('size-3 shrink-0 text-faint transition-transform duration-150', open && 'rotate-90')} />
       </button>
@@ -412,10 +391,7 @@ function ToolGroupCard({ segs, children }: { segs: ToolSeg[]; children: React.Re
 
 
 interface Props {
-  messages: ChatMsg[]
-  streamText: string
-  streamThinking: string
-  streamTools: StreamTool[]
+  messages: ChatItem[]
   turn: TurnStatus
   sessionId: string
   /** 还有更早的历史页（M51） */
@@ -424,20 +400,31 @@ interface Props {
 }
 
 type RenderItem =
-  | { kind: 'msg'; m: ChatMsg }
-  | { kind: 'toolgroup'; key: string; family: ToolFamily; msgs: ChatMsg[] }
+  | { kind: 'msg'; m: ChatItem }
+  | { kind: 'toolgroup'; key: string; family: ToolFamily; msgs: Message[] }
+
+const isMessage = (x: ChatItem): x is Message => x.role !== 'error'
+const toolsOf = (m: Message): ToolUseBlock[] => m.content.filter((b): b is ToolUseBlock => b.type === 'tool_use')
+
+/** 消息时刻（epoch ms）：算「已工作 Ns」用；缺失/坏值 → null */
+const tsOf = (m: ChatItem): number | null => {
+  if (m.timestamp === null) return null
+  const n = Date.parse(m.timestamp)
+  return Number.isNaN(n) ? null : n
+}
 
 /** 连续的「纯工具、同族、无 sidechain 锚」assistant 消息 → 一组（M48） */
-function buildRenderItems(messages: ChatMsg[]): RenderItem[] {
+function buildRenderItems(messages: ChatItem[]): RenderItem[] {
   const out: RenderItem[] = []
   for (const m of messages) {
     const toolOnly =
+      isMessage(m) &&
       m.role === 'assistant' &&
-      m.sidechain === null &&
-      m.segments.length > 0 &&
-      m.segments.every((sg) => sg.kind === 'tool')
-    const fam = toolOnly ? toolFamily((m.segments[0] as ToolSeg).name) : null
-    const uniform = toolOnly && m.segments.every((sg) => toolFamily((sg as ToolSeg).name) === fam)
+      m.sidechain_count === undefined &&
+      m.content.length > 0 &&
+      m.content.every((b) => b.type === 'tool_use')
+    const fam = toolOnly ? toolFamily(toolsOf(m)[0]!.name) : null
+    const uniform = toolOnly && toolsOf(m).every((tl) => toolFamily(tl.name) === fam)
     // TodoWrite 有专属卡，不进组
     if (uniform && fam !== null && fam !== 'todo') {
       const last = out[out.length - 1]
@@ -452,7 +439,7 @@ function buildRenderItems(messages: ChatMsg[]): RenderItem[] {
   }
   // 只有一条消息且只有一个调用的「组」还原成普通消息
   return out.map((it) =>
-    it.kind === 'toolgroup' && it.msgs.length === 1 && it.msgs[0]!.segments.length === 1
+    it.kind === 'toolgroup' && it.msgs.length === 1 && it.msgs[0]!.content.length === 1
       ? { kind: 'msg' as const, m: it.msgs[0]! }
       : it,
   )
@@ -468,7 +455,7 @@ interface TurnNode {
   work: RenderItem[]
   finals: RenderItem[]
   seconds: number | null
-  /** 有工具停在 pending（中断/取消的轮）→ 头部显示「已取消」 */
+  /** 有工具停在 pending / canceled（中断/取消的轮）→ 头部显示「已取消」 */
   canceled: boolean
 }
 type Node = RenderItem | TurnNode
@@ -482,12 +469,12 @@ function buildNodes(items: RenderItem[], liveTailOpen: boolean): Node[] {
     if (buf.length === 0) return
     const acc = buf
     buf = []
-    // 最终回答 = 最后一个带 text/image 段的普通 assistant 消息；
-    // 它里面的 thinking 段仍归入「已工作」
+    // 最终回答 = 最后一个带 text/image 块的普通 assistant 消息；
+    // 它里面的 thinking 块仍归入「已工作」
     let finalIdx = -1
     for (let i = acc.length - 1; i >= 0; i--) {
       const it = acc[i]!
-      if (it.kind === 'msg' && it.m.segments.some((sg) => sg.kind === 'text' || sg.kind === 'image')) {
+      if (it.kind === 'msg' && isMessage(it.m) && it.m.content.some((b) => b.type === 'text' || b.type === 'image')) {
         finalIdx = i
         break
       }
@@ -499,12 +486,14 @@ function buildNodes(items: RenderItem[], liveTailOpen: boolean): Node[] {
         work.push(it)
         return
       }
-      const m = (it as { m: ChatMsg }).m
-      const thinkSegs = m.segments.filter((sg) => sg.kind === 'thinking')
-      if (thinkSegs.length > 0) {
-        work.push({ kind: 'msg', m: { ...m, key: `${m.key}-think`, segments: thinkSegs, meta: null, sidechain: null } })
+      const m = (it as { m: Message }).m
+      const thinking = m.content.filter((b) => b.type === 'thinking')
+      if (thinking.length > 0) {
+        const { sidechain_count: _anchor, ...rest } = m
+        void _anchor
+        work.push({ kind: 'msg', m: { ...rest, key: `${m.key}-think`, content: thinking, model: null } })
       }
-      finals.push({ kind: 'msg', m: { ...m, segments: m.segments.filter((sg) => sg.kind !== 'thinking') } })
+      finals.push({ kind: 'msg', m: { ...m, content: m.content.filter((b) => b.type !== 'thinking') } })
     })
     if (work.length === 0 || open) {
       // 没有过程,或这一轮还在跑 → 平铺
@@ -514,15 +503,15 @@ function buildNodes(items: RenderItem[], liveTailOpen: boolean): Node[] {
     let endTs: number | null = null
     for (let i = acc.length - 1; i >= 0 && endTs === null; i--) {
       const it = acc[i]!
-      const ms = it.kind === 'msg' ? [it.m] : it.msgs
-      for (let j = ms.length - 1; j >= 0 && endTs === null; j--) endTs = ms[j]!.ts
+      const ms: ChatItem[] = it.kind === 'msg' ? [it.m] : it.msgs
+      for (let j = ms.length - 1; j >= 0 && endTs === null; j--) endTs = tsOf(ms[j]!)
     }
     const seconds =
       userTs !== null && endTs !== null && endTs > userTs ? Math.max(1, Math.round((endTs - userTs) / 1000)) : null
     const canceled = work.some((it) => {
-      const msgs = it.kind === 'msg' ? [it.m] : it.msgs
+      const msgs: ChatItem[] = it.kind === 'msg' ? [it.m] : it.msgs
       return msgs.some((wm) =>
-        wm.segments.some((sg) => sg.kind === 'tool' && (sg.status === 'pending' || sg.status === 'canceled')),
+        isMessage(wm) && toolsOf(wm).some((tl) => tl.status === 'pending' || tl.status === 'canceled'),
       )
     })
     nodes.push({ kind: 'turn', key: `turn-${acc[0]!.kind === 'msg' ? acc[0]!.m.key : acc[0]!.key}`, work, finals, seconds, canceled })
@@ -534,7 +523,7 @@ function buildNodes(items: RenderItem[], liveTailOpen: boolean): Node[] {
     if (isUser || isError) {
       flush(false)
       nodes.push(it)
-      if (isUser) userTs = (it as { m: ChatMsg }).m.ts
+      if (isUser) userTs = tsOf((it as { m: ChatItem }).m)
       return
     }
     buf.push(it)
@@ -566,9 +555,7 @@ function WorkedTurn({ node, children }: { node: TurnNode; children: React.ReactN
   )
 }
 
-export function Chat({
-  messages, streamText, streamThinking, streamTools, turn, sessionId, hasEarlier, onLoadEarlier,
-}: Props) {
+export function Chat({ messages, turn, sessionId, hasEarlier, onLoadEarlier }: Props) {
   useLang()
   const scrollRef = useRef<HTMLDivElement>(null)
   const [lightbox, setLightbox] = useState<ImageRef | null>(null)
@@ -596,7 +583,7 @@ export function Chat({
     }
     // 用户上翻阅读时不抢滚动位置（M56）；贴底才跟随
     if (atBottomRef.current) el.scrollTop = el.scrollHeight
-  }, [messages, streamText, streamThinking, streamTools.length, turn.running])
+  }, [messages, turn.running])
 
   const onScroll = () => {
     const el = scrollRef.current
@@ -633,82 +620,83 @@ export function Chat({
     el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
   }
 
+  const renderTool = (m: Message, tool: ToolUseBlock, key: string): React.ReactNode => (
+    <div key={key}>
+      <ToolRow tool={tool} />
+      {tool.agent !== null && (
+        <SidechainBlock
+          fetchPath={`/api/v1/sessions/${sessionId}/subagents/${tool.agent.id}`}
+          label={tool.agent.label}
+        />
+      )}
+      {/* 占位阶段的工具消息不会有 agent；m 留着给将来的实时 sidechain 用 */}
+      {void m}
+    </div>
+  )
+
   const renderItem = (it: RenderItem): React.ReactNode => {
     if (it.kind === 'toolgroup') {
-      const segs = it.msgs.flatMap((gm) => gm.segments.filter((sg): sg is ToolSeg => sg.kind === 'tool'))
+      const tools = it.msgs.flatMap(toolsOf)
       return (
         <div className="mt-0.5 max-w-[94%] self-start" key={it.key}>
-          <ToolGroupCard segs={segs}>
-            {it.msgs.map((gm) =>
-              gm.segments.map((seg, i) =>
-                seg.kind === 'tool' ? (
-                  <div key={`${gm.key}-${i}`}>
-                    <ToolRow seg={seg} />
-                    {seg.agent !== null && (
-                      <SidechainBlock
-                        fetchPath={`/api/v1/sessions/${sessionId}/subagents/${seg.agent.id}`}
-                        label={seg.agent.label}
-                      />
-                    )}
-                  </div>
-                ) : null,
-              ),
-            )}
+          <ToolGroupCard tools={tools}>
+            {it.msgs.map((gm) => toolsOf(gm).map((tool, i) => renderTool(gm, tool, `${gm.key}-${i}`)))}
           </ToolGroupCard>
         </div>
       )
     }
     const m = it.m
-    return m.role === 'user' ? (
-      <div className="mt-4 flex scroll-mt-2 flex-col items-end gap-2 first:mt-0" data-umsg={m.key} key={m.key}>
-        {textOfSegments(m.segments) !== '' && (
-          <div className="max-w-[78%] rounded-2xl rounded-br-md border border-accent-bd bg-accent px-[15px] py-[11px] text-[15px] leading-normal break-words whitespace-pre-wrap shadow-xs">
-            {textOfSegments(m.segments)}
-          </div>
-        )}
-        {m.segments.filter((s) => s.kind === 'image').map((s, i) => (
-          <Thumb image={s.image} key={i} />
-        ))}
-      </div>
-    ) : (
-      <div className="mt-2.5 max-w-[94%] self-start" key={m.key}>
-        {m.segments.map((seg, i) =>
-          seg.kind === 'thinking' ? (
-            <ThinkingBlock key={i} seconds={seg.seconds} text={seg.text} />
-          ) : seg.kind === 'image' ? (
-            <div className="mt-2" key={i}>
-              <Thumb image={seg.image} />
-            </div>
-          ) : seg.kind === 'text' ? (
-            m.role === 'error' ? (
-              <div className="text-[15px] leading-relaxed break-words whitespace-pre-wrap text-destructive" key={i}>
-                {seg.text}
-              </div>
-            ) : (
-              <div className="text-[15px] leading-relaxed break-words" key={i}>
-                <Markdown text={seg.text} />
-              </div>
-            )
-          ) : (
-            <div key={i}>
-              <ToolRow seg={seg} />
-              {seg.agent !== null && (
-                <SidechainBlock
-                  fetchPath={`/api/v1/sessions/${sessionId}/subagents/${seg.agent.id}`}
-                  label={seg.agent.label}
-                />
+    if (m.role === 'error') {
+      return (
+        <div className="mt-2.5 max-w-[94%] self-start" key={m.key}>
+          <div className="text-[15px] leading-relaxed break-words whitespace-pre-wrap text-destructive">{m.text}</div>
+        </div>
+      )
+    }
+    if (m.role === 'user') {
+      const text = textOf(m)
+      return (
+        <div className="mt-4 flex scroll-mt-2 flex-col items-end gap-2 first:mt-0" data-umsg={m.key} key={m.key}>
+          {text !== '' && (
+            <div
+              className={cn(
+                'max-w-[78%] rounded-2xl rounded-br-md border border-accent-bd bg-accent px-[15px] py-[11px] text-[15px] leading-normal break-words whitespace-pre-wrap shadow-xs',
+                m.partial && 'opacity-70',
               )}
+            >
+              {text}
             </div>
+          )}
+          {m.content.map((b, i) => (b.type === 'image' ? <Thumb image={b} key={i} /> : null))}
+        </div>
+      )
+    }
+    const toolOnly = m.content.every((b) => b.type === 'tool_use')
+    return (
+      <div className="mt-2.5 max-w-[94%] self-start" key={m.key}>
+        {m.content.map((b, i) =>
+          b.type === 'thinking' ? (
+            <ThinkingBlock key={i} seconds={b.seconds} streaming={m.partial} text={b.thinking} />
+          ) : b.type === 'image' ? (
+            <div className="mt-2" key={i}>
+              <Thumb image={b} />
+            </div>
+          ) : b.type === 'text' ? (
+            <div className={cn('text-[15px] leading-relaxed break-words', m.partial && 'cc-stream-cursor')} key={i}>
+              <Markdown text={b.text} />
+            </div>
+          ) : (
+            renderTool(m, b, String(i))
           ),
         )}
-        {m.sidechain !== null && (
+        {m.sidechain_count !== undefined && m.uuid !== null && (
           <SidechainBlock
-            fetchPath={`/api/v1/sessions/${sessionId}/sidechains/${m.sidechain.uuid}`}
-            label={t('subagentMsgs', { n: m.sidechain.count })}
+            fetchPath={`/api/v1/sessions/${sessionId}/sidechains/${m.uuid}`}
+            label={t('subagentMsgs', { n: m.sidechain_count })}
           />
         )}
-        {m.meta !== null && !m.segments.every((sg) => sg.kind === 'tool') && (
-          <div className="mt-1 text-xs text-faint">{m.meta}</div>
+        {m.model !== null && !m.partial && !toolOnly && (
+          <div className="mt-1 text-xs text-faint">{m.model}</div>
         )}
       </div>
     )
@@ -731,7 +719,7 @@ export function Chat({
             {t('loadEarlier')}
           </button>
         )}
-        {messages.length === 0 && streamText === '' && streamThinking === '' && streamTools.length === 0 && (
+        {messages.length === 0 && (
           <div className="m-auto py-12 text-center text-[13px] text-faint">
             {t('draftHint')}
           </div>
@@ -746,24 +734,11 @@ export function Chat({
             renderItem(node)
           ),
         )}
-        {(streamText !== '' || streamThinking !== '' || streamTools.length > 0) && (
-          <div className="mt-2.5 max-w-[94%] self-start">
-            {streamThinking !== '' && <ThinkingBlock streaming text={streamThinking} />}
-            {streamText !== '' && (
-              <div className="cc-stream-cursor text-[15px] leading-relaxed break-words">
-                <Markdown text={streamText} />
-              </div>
-            )}
-            {streamTools.map((st) => (
-              <PlainToolCard key={st.index} seg={streamToolSeg(st)} />
-            ))}
-          </div>
-        )}
         <TurnFooter turn={turn} />
       </div>
     </div>
     {(() => {
-      const anchors = messages.filter((m) => m.role === 'user')
+      const anchors = messages.filter((m): m is Message => m.role === 'user')
       if (anchors.length < 2) return null
       return (
         <div
@@ -797,7 +772,7 @@ export function Chat({
                     active ? 'text-primary' : 'text-muted-foreground group-hover/anchor:text-foreground',
                   )}
                 >
-                  {textOfSegments(m.segments).replace(/\s+/g, ' ').slice(0, 60)}
+                  {textOf(m).replace(/\s+/g, ' ').slice(0, 60)}
                 </span>
               </button>
             )

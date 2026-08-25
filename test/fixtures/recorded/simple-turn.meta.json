@@ -1,6 +1,6 @@
 {
-  "claude_version": "2.1.241 (Claude Code)",
-  "recorded_at": "2026-08-24T07:54:56.296Z",
+  "claude_version": "2.1.243 (Claude Code)",
+  "recorded_at": "2026-08-25T02:07:56.881Z",
   "sent": [
     "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Reply with exactly: hi\"}]}}"
   ]

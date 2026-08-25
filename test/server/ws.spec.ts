@@ -90,6 +90,15 @@ async function waitFor(assertion: () => void, timeoutMs = 3000): Promise<void> {
   }
 }
 
+/** D7 之后 hub 上只有归一化的 message：假引擎得发像样的 assistant 帧 */
+function assistantFrame(uuid: string, text: string): unknown {
+  return {
+    type: 'assistant', uuid, parent_tool_use_id: null, timestamp: '2026-08-25T00:00:00Z',
+    message: { id: `msg_${uuid}`, role: 'assistant', model: 'm', content: [{ type: 'text', text }] },
+  }
+}
+const streamEvent = (event: Record<string, unknown>): unknown => ({ type: 'stream_event', parent_tool_use_id: null, event })
+
 describe('WebSocket /api/v1/ws', () => {
   it('连上之后能收到 state 事件', async () => {
     const ctx = await setup()
@@ -106,8 +115,10 @@ describe('WebSocket /api/v1/ws', () => {
     servers.push(ctx.held)
     const c = await connect(ctx.wsUrl, '?session=s1')
     const engine = (await ctx.registry.ensure('s1')) as FakeEngine
-    engine.emit('message', { type: 'assistant', message: { role: 'assistant' } })
-    engine.emit('message', { type: 'stream_event', event: { type: 'content_block_delta' } })
+    engine.emit('message', assistantFrame('a1', 'hi'))
+    engine.emit('message', streamEvent({ type: 'message_start', message: { id: 'm2', model: 'm' } }))
+    engine.emit('message', streamEvent({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }))
+    engine.emit('message', streamEvent({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'h' } }))
     await waitFor(() => {
       const events = c.messages.map((m) => m.event)
       expect(events).toContain('message')
@@ -123,7 +134,7 @@ describe('WebSocket /api/v1/ws', () => {
     const c1 = await connect(ctx.wsUrl, '?session=s1')
     const c2 = await connect(ctx.wsUrl, '?session=s1')
     const engine = (await ctx.registry.ensure('s1')) as FakeEngine
-    engine.emit('message', { type: 'user' })
+    engine.emit('message', assistantFrame('a1', 'hi'))
     await waitFor(() => {
       expect(c1.messages.some((m) => m.event === 'message')).toBe(true)
       expect(c2.messages.some((m) => m.event === 'message')).toBe(true)
@@ -138,7 +149,7 @@ describe('WebSocket /api/v1/ws', () => {
     const engine = (await ctx.registry.ensure('s1')) as FakeEngine
     c1.ws.close()
     await new Promise((r) => setTimeout(r, 50))
-    engine.emit('message', { type: 'assistant' }) // 若服务器崩了这条收不到
+    engine.emit('message', assistantFrame('a2', 'hi')) // 若服务器崩了这条收不到
     await waitFor(() => {
       expect(c2.messages.some((m) => m.event === 'message')).toBe(true)
     })
@@ -160,24 +171,30 @@ describe('WebSocket /api/v1/ws', () => {
     servers.push(ctx.held)
     const c1 = await connect(ctx.wsUrl, '?session=s1')
     const engine = (await ctx.registry.ensure('s1')) as FakeEngine
-    engine.emit('message', { type: 'assistant', n: 1 })
-    // 必须等 n=1 真到了再记 seq，否则记到的是 state 事件的 seq（竞态）
+    engine.emit('message', assistantFrame('n1', 'one'))
+    // 必须等 n1 真到了再记 seq，否则记到的是 state 事件的 seq（竞态）
     await waitFor(() =>
-      expect(c1.messages.some((m) => (m.data as { n?: number }).n === 1)).toBe(true),
+      expect(c1.messages.some((m) => (m.data as { uuid?: string }).uuid === 'n1')).toBe(true),
     )
     const lastSeq = c1.messages[c1.messages.length - 1]!.seq
     c1.ws.close()
 
     // 断开期间又出了两条 —— /history 补不上这段（jsonl 落盘有延迟）
-    engine.emit('message', { type: 'assistant', n: 2 })
-    engine.emit('message', { type: 'assistant', n: 3 })
+    engine.emit('message', assistantFrame('n2', 'two'))
+    engine.emit('message', assistantFrame('n3', 'three'))
 
     const c2 = await connect(ctx.wsUrl, `?session=s1&since=${lastSeq}`)
     await waitFor(() => {
+      // 补发的是 seq > 0 的留存事件
       const ns = c2.messages
-        .filter((m) => m.event === 'message')
-        .map((m) => (m.data as { n: number }).n)
-      expect(ns).toEqual([2, 3])
+        .filter((m) => m.event === 'message' && m.seq > 0)
+        .map((m) => (m.data as { uuid: string }).uuid)
+      expect(ns).toEqual(['n2', 'n3'])
+      // 回合还没结束（没来 result）：D7 的 snapshot 以 seq 0 把当前回合再给一遍，upsert 幂等
+      const snap = c2.messages
+        .filter((m) => m.event === 'message' && m.seq === 0)
+        .map((m) => (m.data as { uuid: string }).uuid)
+      expect(snap).toEqual(['n1', 'n2', 'n3'])
     })
   })
 })

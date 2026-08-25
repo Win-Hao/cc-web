@@ -1,0 +1,7 @@
+{
+  "claude_version": "2.1.243 (Claude Code)",
+  "recorded_at": "2026-08-25T02:08:09.169Z",
+  "sent": [
+    "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Use the Read tool to read the file hello.txt in the current directory, then reply with exactly its contents and nothing else.\"}]}}"
+  ]
+}
