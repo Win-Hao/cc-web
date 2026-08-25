@@ -3,80 +3,47 @@
  *
  * 状态：idle / running / waiting-approval。
  *   prompt 发出      → running
- *   result 帧到达    → idle
- *   can_use_tool     → waiting-approval（全部答复/超时/取消后回 running）
+ *   turn-end         → idle
+ *   approval         → waiting-approval（全部答复/超时/取消后回 running）
  *   引擎退出         → idle（并从表里移除，下次 prompt 重新 spawn）
  * 每次变化 publish 一个 state 事件到 hub，所有标签页同步。
  *
  * 并发策略（R7）：串行化，先拒绝 —— 非 idle 状态的 prompt 直接
  * 抛 SessionBusyError，路由层翻成信封错误码。
  *
- * 控制请求（M6）：set_model / set_permission_mode / list_models 等
- * 走 control()。对 idle 会话会先拉起引擎并 initialize 握手，
- * 握手完成后真正的请求才发出（TDD M6 的核心条款）。每个请求挂
- * 超时，等响应期间引擎死了也 reject —— 任何情况下都不永久挂起。
+ * 协议在引擎里（D8）：这里不见帧，只见 EngineLike 的动作和事件。
+ * 控制请求（M6）对 idle 会话会先拉起引擎，握手由引擎自己做。
  *
- * 工具审批（M7，RISKS R2/R5）：can_use_tool 是 CC 反向问我们。
+ * 工具审批（M7，RISKS R2）：引擎发 approval，我们必须在超时前答复。
  *   - 不答复引擎就永久挂起 → 每个审批带超时（默认 5 分钟），到点自动 deny
- *   - 同一 requestId 会从 initialize 的 pending_permission_requests 和
- *     实时帧各来一次 → 按 requestId 去重，只弹一次
- *   - 对方可能撤回（control_cancel_request）→ 停止等待，之后不再答复
+ *   - 对方撤回（approval-cancel）→ 停止等待，之后不再答复
  *   - 任何终态（allow/deny/timeout/cancelled）都广播 approval_resolved，
  *     所有标签页同步关弹框；已 settle 的再答复 → ApprovalExpiredError
  */
 import { randomUUID } from 'node:crypto'
-import type { EventEmitter } from 'node:events'
 import type { EnginePool } from '#/engine/pool.js'
 import { diagnoseEngineFailure } from '#/engine/diagnose.js'
+import type {
+  ApprovalDecision,
+  ApprovalRequest,
+  ControlArgs,
+  ControlSubtype,
+  EngineFactory,
+  EngineFactoryOptions,
+  EngineLike,
+  PromptImage,
+} from '#/engine/index.js'
 import { LiveTurn } from './message/live.js'
 import type { Message, MessageEvent } from './message/types.js'
 import type { SessionHub } from './hub.js'
 
-export interface EngineLike extends EventEmitter {
-  start(): Promise<void>
-  stop(): Promise<void>
-  /** 写一帧进引擎 stdin；引擎没跑时抛错 */
-  send(frame: unknown): void
-}
-
-export interface EngineFactoryOptions {
-  /** 只在「新建会话」时出现：新会话的工作目录，工厂据此走 --session-id 分支 */
-  newSessionCwd?: string
-  /** 分叉（M55）：--resume <此 id> --fork-session，新 id 由 CC 发、从首帧读回 */
-  forkFrom?: string
-}
-
-export type EngineFactory = (
-  sessionId: string,
-  opts?: EngineFactoryOptions,
-) => EngineLike | Promise<EngineLike>
 export type SessionState = 'idle' | 'running' | 'waiting-approval'
-
-/** prompt 附带的图片（M43）：base64 + 媒体类型，校验在 app 层 */
-export interface PromptImage {
-  media_type: string
-  data: string
-}
 
 export class SessionBusyError extends Error {
   constructor(sessionId: string) {
     super(`session ${sessionId} is busy`)
     this.name = 'SessionBusyError'
   }
-}
-
-/** 控制请求失败：对端回了 error 帧 / 超时 / 引擎中途死了 */
-export class ControlRequestError extends Error {
-  constructor(message: string) {
-    super(message)
-    this.name = 'ControlRequestError'
-  }
-}
-
-interface PendingControl {
-  resolve: (response: unknown) => void
-  reject: (err: Error) => void
-  timer: ReturnType<typeof setTimeout>
 }
 
 /** 审批已终结（答复过/超时/取消）或根本不存在 —— 路由层翻成「已过期」 */
@@ -86,15 +53,6 @@ export class ApprovalExpiredError extends Error {
     this.name = 'ApprovalExpiredError'
   }
 }
-
-/**
- * 审批决定：PermissionResult 形状（sdk.d.ts）。
- * updatedInput：AskUserQuestion 等交互工具的应答通道 —— allow 时把
- * 用户的选择塞回工具入参（{questions, answers, response?}）。
- */
-export type ApprovalDecision =
-  | { behavior: 'allow'; updatedInput?: Record<string, unknown> }
-  | { behavior: 'deny'; message: string }
 
 type ApprovalOutcome = 'allow' | 'deny' | 'timeout' | 'cancelled'
 
@@ -107,17 +65,13 @@ interface ApprovalEntry {
 export class SessionRegistry {
   private readonly engines = new Map<string, EngineLike>()
   private readonly states = new Map<string, SessionState>()
-  private readonly pending = new Map<string, Map<string, PendingControl>>()
   private readonly approvals = new Map<string, Map<string, ApprovalEntry>>()
-  private readonly initialized = new Set<string>()
-  private readonly initializing = new Map<string, Promise<unknown>>()
-  private readonly controlTimeoutMs: number
   private readonly approvalTimeoutMs: number
   private readonly hub: SessionHub
   private readonly factory: EngineFactory
   private readonly pool: EnginePool | undefined
   private readonly now: () => number
-  /** 每会话最后活跃时间（prompt / 控制请求 / 任意 stdout 帧都算活跃） */
+  /** 每会话最后活跃时间（prompt / 控制请求 / 任意回合事件都算活跃） */
   private readonly lastActivity = new Map<string, number>()
   /** D7：每个 session 当前回合的归一化状态（占位 / 未完成的 tool_use），回合结束即清空 */
   private readonly turns = new Map<string, LiveTurn>()
@@ -127,7 +81,6 @@ export class SessionRegistry {
   constructor(deps: {
     hub: SessionHub
     factory: EngineFactory
-    controlTimeoutMs?: number
     approvalTimeoutMs?: number
     /** 传了就把引擎登记进空闲回收池（M1 的接线）；sweep 由组合根定时调 */
     pool?: EnginePool
@@ -136,7 +89,6 @@ export class SessionRegistry {
   }) {
     this.hub = deps.hub
     this.factory = deps.factory
-    this.controlTimeoutMs = deps.controlTimeoutMs ?? 10_000
     this.approvalTimeoutMs = deps.approvalTimeoutMs ?? 5 * 60_000
     this.pool = deps.pool
     this.now = deps.now ?? Date.now
@@ -231,45 +183,18 @@ export class SessionRegistry {
 
   /**
    * 分叉会话（M55）：CC 用 --resume <old> --fork-session 自己发新 id，
-   * 我们从首个带 session_id 的 stdout 帧读回来，再把引擎登记到新 id 下。
+   * 引擎从首帧读回来，我们再把它登记到新 id 下。
    */
   async fork(sessionId: string, timeoutMs = 15_000): Promise<string> {
     const engine = await this.factory(sessionId, { forkFrom: sessionId })
-    let cleanup = () => {}
-    const idPromise = new Promise<string>((resolve, reject) => {
-      const onMsg = (frame: unknown) => {
-        const sid =
-          typeof frame === 'object' && frame !== null
-            ? (frame as Record<string, unknown>).session_id
-            : undefined
-        if (typeof sid === 'string' && sid !== '') resolve(sid)
-      }
-      const onErr = (err: Error) => reject(err)
-      const onExit = () => reject(new Error('engine exited before reporting forked session id'))
-      const timer = setTimeout(
-        () => reject(new Error('timed out waiting for forked session id')),
-        timeoutMs,
-      )
-      engine.on('message', onMsg)
-      engine.on('error', onErr)
-      engine.on('exit', onExit)
-      cleanup = () => {
-        clearTimeout(timer)
-        engine.off('message', onMsg)
-        engine.off('error', onErr)
-        engine.off('exit', onExit)
-      }
-    })
     try {
       await engine.start()
-      const newId = await idPromise
-      cleanup()
+      const newId = await engine.awaitSessionId(timeoutMs)
       this.wire(newId, engine)
       this.touch(newId)
       this.trackPool(newId, engine)
       return newId
     } catch (err) {
-      cleanup()
       void engine.stop()
       throw err
     }
@@ -278,19 +203,15 @@ export class SessionRegistry {
   /** 引擎接线（从 ensure 抽出）：事件路由 + 生命周期清理，不含 start */
   private wire(sessionId: string, engine: EngineLike): void {
     this.engines.set(sessionId, engine)
-    engine.on('message', (frame) => {
+    engine.on('turn-event', (ev) => {
       this.touch(sessionId)
-      // 控制帧都是 RPC 管道，不是 UI 事件，先进路由：
-      // control_response → 等待中的请求；control_request(can_use_tool) → 审批；
-      // control_cancel_request → 审批撤回
-      if (this.routeControlResponse(sessionId, frame)) return
-      if (this.routeControlRequest(sessionId, frame)) return
-      if (this.routeControlCancel(sessionId, frame)) return
       // D7：原帧不出门 —— LiveTurn 归一化成 message / delta / turn_end，才发 hub
-      this.emitTurnEvents(sessionId, this.turn(sessionId).ingest(frame))
-      if (isResultFrame(frame)) this.setState(sessionId, 'idle')
+      this.emitTurnEvents(sessionId, this.turn(sessionId).ingest(ev))
     })
-    engine.on('error', (err: Error) => {
+    engine.on('turn-end', () => this.setState(sessionId, 'idle'))
+    engine.on('approval', (req) => this.addApproval(sessionId, req))
+    engine.on('approval-cancel', (requestId) => this.settleApproval(sessionId, requestId, 'cancelled'))
+    engine.on('error', (err) => {
       // 失败分类（M41）：登录态失效/额度受限/连接中断/找不到二进制 →
       // 第一行是能行动的人话，原始报错跟在后面；分类不了就裸转
       const diag = diagnoseEngineFailure(err.message)
@@ -302,19 +223,10 @@ export class SessionRegistry {
     })
     engine.on('exit', () => {
       // 引擎死了：从表里移除（下次 prompt 重新 spawn），状态归位，
-      // 等待中的控制请求全部 reject（不永久挂起），握手状态作废，
       // 待审批的全部取消（清 timer，不泄漏）
       if (this.engines.get(sessionId) === engine) this.engines.delete(sessionId)
       this.pool?.untrack(sessionId) // 引擎已经死了，回收器别再去 stop 尸体
       this.lastActivity.delete(sessionId)
-      const bySession = this.pending.get(sessionId)
-      if (bySession !== undefined) {
-        for (const p of bySession.values()) {
-          clearTimeout(p.timer)
-          p.reject(new ControlRequestError('engine exited while awaiting control_response'))
-        }
-        this.pending.delete(sessionId)
-      }
       this.cancelAllApprovals(sessionId)
       // 回合没收到 result 就断了：没结果的 tool_use 判 canceled，占位转终态
       const turn = this.turns.get(sessionId)
@@ -323,7 +235,6 @@ export class SessionRegistry {
         this.turns.delete(sessionId)
       }
       this.settings.delete(sessionId)
-      this.initialized.delete(sessionId)
       this.setState(sessionId, 'idle')
       // 防泄漏（M16）：state 回默认值后表项可删（get 缺省就是 idle）；
       // hub 留存只在没有订阅者时回收（断线补发还要用）
@@ -364,16 +275,7 @@ export class SessionRegistry {
     this.hub.publish(sessionId, 'message', this.turn(sessionId).prompt(text, images))
     try {
       const engine = await this.ensure(sessionId)
-      // 图在前文在后（Messages API 的推荐顺序）；纯图不发空 text 块
-      const content: unknown[] = images.map((img) => ({
-        type: 'image',
-        source: { type: 'base64', media_type: img.media_type, data: img.data },
-      }))
-      if (text !== '') content.push({ type: 'text', text })
-      engine.send({
-        type: 'user',
-        message: { role: 'user', content },
-      })
+      engine.prompt(text, images)
       this.touch(sessionId)
     } catch (err) {
       this.turns.delete(sessionId) // 没发出去的回合不留状态
@@ -389,205 +291,29 @@ export class SessionRegistry {
   async interrupt(sessionId: string): Promise<void> {
     const engine = this.engines.get(sessionId)
     if (engine === undefined || this.state(sessionId) !== 'running') return
-    engine.send({
-      type: 'control_request',
-      request_id: randomUUID(),
-      request: { subtype: 'interrupt' },
-    })
+    engine.interrupt()
   }
 
-  /* ── 控制协议（M6）────────────────────────────────────── */
-
   /**
-   * 发控制请求并等响应。对 idle 会话：先拉起引擎、initialize 握手
-   * 完成（幂等，同一引擎只握一次），真正的请求才发出。
+   * 发控制请求并等应答（M6）。对 idle 会话先拉起引擎；握手由引擎做。
+   * 失败抛 ControlRequestError（路由层翻成信封错误码或按 D5 降级）。
    */
-  async control(sessionId: string, request: Record<string, unknown>): Promise<unknown> {
+  async control<S extends ControlSubtype>(sessionId: string, subtype: S, ...args: ControlArgs<S>): Promise<unknown> {
     const engine = await this.ensure(sessionId)
-    await this.ensureInitialized(sessionId, engine)
-    return this.request(sessionId, engine, request)
-  }
-
-  async setModel(sessionId: string, model: string): Promise<void> {
-    await this.control(sessionId, { subtype: 'set_model', model })
-  }
-
-  async setPermissionMode(sessionId: string, mode: string): Promise<void> {
-    await this.control(sessionId, { subtype: 'set_permission_mode', mode })
-  }
-
-  /**
-   * 合并 flag 层设置（M24）。effortLevel 走这里 —— sdk.d.ts：'max' 是
-   * 会话级的，只在支持的模型上生效，永不落盘。
-   */
-  async applyFlagSettings(sessionId: string, settings: Record<string, unknown>): Promise<void> {
-    await this.control(sessionId, { subtype: 'apply_flag_settings', settings })
-  }
-
-  /** get_settings 的完整 payload（effective/sources/applied，M27）。 */
-  async getSettings(sessionId: string): Promise<unknown> {
-    return await this.control(sessionId, { subtype: 'get_settings' })
-  }
-
-  /** list_models 的 response payload（含 models 数组），失败抛 ControlRequestError */
-  async listModels(sessionId: string): Promise<unknown> {
-    return await this.control(sessionId, { subtype: 'list_models' })
-  }
-
-  /**
-   * get_usage 的完整 payload（session 段 + rate_limits 段，PROTOCOL §4）。
-   * 拿不到（超时 / 对端 error / 引擎死）→ null，不抛 —— 用量是锦上添花，
-   * 绝不能挂（D5/R4）。路由层据此降级或回空。
-   */
-  async getUsage(sessionId: string): Promise<unknown | null> {
-    try {
-      return await this.control(sessionId, { subtype: 'get_usage' })
-    } catch (err) {
-      if (err instanceof ControlRequestError) return null
-      throw err
-    }
-  }
-
-  /**
-   * get_context_usage 的 payload（totalTokens/maxTokens/percentage…，M30）。
-   * 拿不到 → null，不抛 —— context 环是锦上添花，绝不能挂（D5 同款）。
-   */
-  async getContextUsage(sessionId: string): Promise<unknown | null> {
-    try {
-      return await this.control(sessionId, { subtype: 'get_context_usage' })
-    } catch (err) {
-      if (err instanceof ControlRequestError) return null
-      throw err
-    }
-  }
-
-  private async ensureInitialized(sessionId: string, engine: EngineLike): Promise<void> {
-    if (this.initialized.has(sessionId)) return
-    // 并发调用共享同一次握手
-    let p = this.initializing.get(sessionId)
-    if (p === undefined) {
-      p = this.request(sessionId, engine, { subtype: 'initialize' })
-        .then((response) => {
-          this.initialized.add(sessionId)
-          // 接入已初始化的会话：响应里可能带还没答复的审批请求（R5），
-          // 登记进去 —— 同一 requestId 之后作为实时帧再来会被去重
-          this.ingestPendingPermissions(sessionId, response)
-        })
-        .finally(() => {
-          this.initializing.delete(sessionId)
-        })
-      this.initializing.set(sessionId, p)
-    }
-    await p
-  }
-
-  private ingestPendingPermissions(sessionId: string, response: unknown): void {
-    if (typeof response !== 'object' || response === null) return
-    const list = (response as Record<string, unknown>).pending_permission_requests
-    if (!Array.isArray(list)) return
-    for (const frame of list) {
-      if (typeof frame !== 'object' || frame === null) continue
-      const f = frame as Record<string, unknown>
-      const request = f.request as { subtype?: string } | undefined
-      if (request?.subtype === 'can_use_tool' && typeof f.request_id === 'string') {
-        this.addApproval(sessionId, f.request_id, f)
-      }
-    }
-  }
-
-  /** 发一个 control_request 并挂起等匹配的 control_response（超时/引擎死都 reject） */
-  private request(
-    sessionId: string,
-    engine: EngineLike,
-    request: Record<string, unknown>,
-  ): Promise<unknown> {
-    const requestId = randomUUID()
-    return new Promise((resolve, reject) => {
-      let bySession = this.pending.get(sessionId)
-      if (bySession === undefined) {
-        bySession = new Map()
-        this.pending.set(sessionId, bySession)
-      }
-      const timer = setTimeout(() => {
-        bySession.delete(requestId)
-        reject(
-          new ControlRequestError(
-            `control request timed out: ${String(request.subtype ?? '?')}`,
-          ),
-        )
-      }, this.controlTimeoutMs)
-      bySession.set(requestId, { resolve, reject, timer })
-      try {
-        engine.send({ type: 'control_request', request_id: requestId, request })
-        this.touch(sessionId)
-      } catch (err) {
-        clearTimeout(timer)
-        bySession.delete(requestId)
-        reject(err instanceof Error ? err : new Error(String(err)))
-      }
-    })
-  }
-
-  /** 把 control_response 路由给等待中的请求。返回 true = 这帧被消费了。 */
-  private routeControlResponse(sessionId: string, frame: unknown): boolean {
-    if (typeof frame !== 'object' || frame === null) return false
-    const f = frame as Record<string, unknown>
-    if (f.type !== 'control_response') return false
-    const resp = f.response as
-      | { subtype?: string; request_id?: string; response?: unknown; error?: unknown }
-      | null
-      | undefined
-    if (resp === null || resp === undefined || typeof resp.request_id !== 'string') return true
-    const p = this.pending.get(sessionId)?.get(resp.request_id)
-    if (p !== undefined) {
-      this.pending.get(sessionId)!.delete(resp.request_id)
-      clearTimeout(p.timer)
-      if (resp.subtype === 'success') {
-        p.resolve(resp.response)
-      } else {
-        p.reject(
-          new ControlRequestError(
-            typeof resp.error === 'string' ? resp.error : 'control request failed',
-          ),
-        )
-      }
-    }
-    return true
+    this.touch(sessionId)
+    return engine.control(subtype, ...args)
   }
 
   /* ── 工具审批（M7）────────────────────────────────────── */
 
-  /** CC → 我们的反向请求。can_use_tool 转审批；其它 subtype 暂不支持，原样忽略。 */
-  private routeControlRequest(sessionId: string, frame: unknown): boolean {
-    if (typeof frame !== 'object' || frame === null) return false
-    const f = frame as Record<string, unknown>
-    if (f.type !== 'control_request') return false
-    const request = f.request as { subtype?: string } | undefined
-    if (request?.subtype !== 'can_use_tool') return true
-    if (typeof f.request_id !== 'string') return true
-    this.addApproval(sessionId, f.request_id, f)
-    return true
-  }
-
-  /** 对方撤回还在飞的请求：停止等待，之后不再答复。 */
-  private routeControlCancel(sessionId: string, frame: unknown): boolean {
-    if (typeof frame !== 'object' || frame === null) return false
-    const f = frame as Record<string, unknown>
-    if (f.type !== 'control_cancel_request' || typeof f.request_id !== 'string') return false
-    this.settleApproval(sessionId, f.request_id, 'cancelled')
-    return true
-  }
-
-  /** 登记审批（按 requestId 去重，R5），广播 approval 事件，挂超时。 */
-  private addApproval(sessionId: string, requestId: string, frame: unknown): void {
+  /** 登记审批，广播 approval 事件，挂超时。引擎保证同一 requestId 只来一次（R5） */
+  private addApproval(sessionId: string, request: ApprovalRequest): void {
     let bySession = this.approvals.get(sessionId)
     if (bySession === undefined) {
       bySession = new Map()
       this.approvals.set(sessionId, bySession)
     }
-    if (bySession.has(requestId)) return // 去重：pending_permission_requests + 实时帧各来一次
-
-    const request = (frame as { request?: Record<string, unknown> }).request ?? {}
+    const { requestId } = request
     bySession.set(requestId, {
       requestId,
       settled: false,
@@ -599,11 +325,7 @@ export class SessionRegistry {
         })
       }, this.approvalTimeoutMs),
     })
-    this.hub.publish(sessionId, 'approval', {
-      requestId,
-      tool_name: request.tool_name ?? null,
-      input: request.input ?? null,
-    })
+    this.hub.publish(sessionId, 'approval', request)
     this.setState(sessionId, 'waiting-approval')
   }
 
@@ -615,8 +337,8 @@ export class SessionRegistry {
   }
 
   /**
-   * 终结一个审批：清 timer、（可选）发 control_response 给引擎、
-   * 广播 approval_resolved。幂等 —— 已 settle 的直接跳过。
+   * 终结一个审批：清 timer、（可选）答复引擎、广播 approval_resolved。
+   * 幂等 —— 已 settle 的直接跳过。
    */
   private settleApproval(
     sessionId: string,
@@ -632,18 +354,19 @@ export class SessionRegistry {
     clearTimeout(entry.timer)
     bySession.delete(requestId)
 
-    // decision 存在才回帧：cancelled 是对方撤回，协议明确「不答复」
+    // decision 存在才答复：cancelled 是对方撤回，协议明确「不答复」
     if (decision !== undefined) {
-      this.engines.get(sessionId)?.send({
-        type: 'control_response',
-        response: { subtype: 'success', request_id: requestId, response: decision },
-      })
+      try {
+        this.engines.get(sessionId)?.answerApproval(requestId, decision)
+      } catch {
+        // 引擎正在死（stdin 已关、exit 还没到）：答复发不出去无所谓，exit 处理器会清
+      }
     }
     this.hub.publish(sessionId, 'approval_resolved', { requestId, outcome })
     this.maybeUnwait(sessionId)
   }
 
-  /** 引擎死了：待审批全部取消（引擎都没了，发不出 deny 帧，只清状态广播）。 */
+  /** 引擎死了：待审批全部取消（引擎都没了，发不出 deny，只清状态广播）。 */
   private cancelAllApprovals(sessionId: string): void {
     const bySession = this.approvals.get(sessionId)
     if (bySession === undefined) return
@@ -659,12 +382,4 @@ export class SessionRegistry {
     if ((this.approvals.get(sessionId)?.size ?? 0) > 0) return
     this.setState(sessionId, 'running')
   }
-}
-
-function isResultFrame(frame: unknown): boolean {
-  return (
-    typeof frame === 'object' &&
-    frame !== null &&
-    (frame as Record<string, unknown>).type === 'result'
-  )
 }

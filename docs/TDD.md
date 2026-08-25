@@ -221,6 +221,37 @@ const engine = new Engine({
 **不写测试**（见 ARCHITECTURE D2）。
 手工验一遍：能看历史、能发消息、能看到流式输出、能弹审批、能切模型。
 
+## D8 协议收进引擎
+
+引擎的契约（`EngineLike`）在 `src/engine/types.ts`。协议层用**假传输**
+单测（不起进程），进程层用假二进制，服务器层只用一个替身
+`test/fixtures/fake-engine.ts`——spec 里不许再拼 `control_request` /
+`control_response` 帧；要验协议，去 protocol.spec 或 probe。
+
+**协议层（`test/engine/protocol.spec.ts`）**
+- [x] `prompt(text)` 发出的 user 帧与录制的 sent 完全一致；带图片时 image 块在前
+- [x] `interrupt()` 发 `interrupt` 控制帧，不等应答
+- [x] 第一个控制请求先 `initialize`，握手完成后真正的请求才发出；
+      同一引擎只握一次，并发共享
+- [x] 发出的 initialize / list_models / set_model 三帧与录制的 sent 完全一致
+- [x] `control_response` success → resolve；error → reject 带对端 message；
+      超时 / 引擎退出 → reject，不永久挂起
+- [x] 录制的 control.ndjson 回放：三个响应按 request_id 各归其主
+- [x] 非控制帧 → `turn-event`；result 额外 `turn-end`；未知类型透传，
+      `keep_alive` 不透传
+- [x] `can_use_tool` → `approval`；**同一 requestId 从
+      `pending_permission_requests` 和实时帧各来一次只 emit 一次**（R5）
+- [x] `answerApproval` 发 `control_response{behavior}`；
+      `control_cancel_request` → `approval-cancel`（没见过的 id 忽略）
+- [x] `awaitSessionId`：首个带 session_id 的帧；引擎退出 / 超时 reject
+
+**工厂（`test/engine/factory.spec.ts`）**
+- [x] resume / 新建 / 分叉三种起法各自的 flag 与 cwd
+
+**真进程（`test/engine/engine.spec.ts`）**
+- [x] `--auto-control` 下 `control(list_models)` 先握手再请求，应答按 request_id 回到调用方
+- [x] `--echo-result` 下 prompt 之后收到 `turn-end`
+
 ---
 
 ## 覆盖率

@@ -5,7 +5,6 @@
  * 多标签页广播、断开不崩也不回收引擎、?since= 断线补发。
  */
 import { describe, it, expect, afterEach } from 'vitest'
-import { EventEmitter } from 'node:events'
 import { fileURLToPath } from 'node:url'
 import WebSocket from 'ws'
 import { createApp } from '#/server/app.js'
@@ -14,21 +13,10 @@ import type { HeldServer } from '#/server/listen.js'
 import { attachWebSocket } from '#/server/ws.js'
 import { SessionHub } from '#/server/hub.js'
 import { SessionRegistry } from '#/server/registry.js'
+import { fakeEngines, waitFor } from '../fixtures/fake-engine.js'
+import type { FakeEngine } from '../fixtures/fake-engine.js'
 
 const FIXTURES = fileURLToPath(new URL('../fixtures/sessions', import.meta.url))
-
-class FakeEngine extends EventEmitter {
-  pid = 4242
-  stopped = false
-  sent: unknown[] = []
-  async start() {}
-  async stop() {
-    this.stopped = true
-  }
-  send(frame: unknown) {
-    this.sent.push(frame)
-  }
-}
 
 interface Ctx {
   held: HeldServer
@@ -39,19 +27,18 @@ interface Ctx {
 
 async function setup(): Promise<Ctx> {
   const hub = new SessionHub()
-  const engines = new Map<string, FakeEngine>()
-  const registry = new SessionRegistry({
-    hub,
-    factory: (id) => {
-      const e = new FakeEngine()
-      engines.set(id, e)
-      return e
-    },
-  })
+  const { factory, engines } = fakeEngines()
+  const registry = new SessionRegistry({ hub, factory })
   const app = createApp({ projectsRoot: FIXTURES })
   const held = await listenWithFallback(app, { host: '127.0.0.1', port: 0 })
   attachWebSocket(held.server, { hub, registry })
   return { held, registry, engines, wsUrl: `ws://127.0.0.1:${held.port}/api/v1/ws` }
+}
+
+/** 起 s1 的引擎并交出假引擎 */
+async function engineFor(ctx: Ctx, id = 's1'): Promise<FakeEngine> {
+  await ctx.registry.ensure(id)
+  return ctx.engines.get(id)!
 }
 
 interface Client {
@@ -77,27 +64,14 @@ function connect(wsUrl: string, query = ''): Promise<Client> {
   })
 }
 
-async function waitFor(assertion: () => void, timeoutMs = 3000): Promise<void> {
-  const deadline = Date.now() + timeoutMs
-  for (;;) {
-    try {
-      assertion()
-      return
-    } catch (err) {
-      if (Date.now() > deadline) throw err
-      await new Promise((r) => setTimeout(r, 20))
-    }
-  }
-}
-
 /** D7 之后 hub 上只有归一化的 message：假引擎得发像样的 assistant 帧 */
-function assistantFrame(uuid: string, text: string): unknown {
+function assistantFrame(uuid: string, text: string): Record<string, unknown> {
   return {
     type: 'assistant', uuid, parent_tool_use_id: null, timestamp: '2026-08-25T00:00:00Z',
     message: { id: `msg_${uuid}`, role: 'assistant', model: 'm', content: [{ type: 'text', text }] },
   }
 }
-const streamEvent = (event: Record<string, unknown>): unknown => ({ type: 'stream_event', parent_tool_use_id: null, event })
+const streamEvent = (event: Record<string, unknown>): Record<string, unknown> => ({ type: 'stream_event', parent_tool_use_id: null, event })
 
 describe('WebSocket /api/v1/ws', () => {
   it('连上之后能收到 state 事件', async () => {
@@ -110,15 +84,15 @@ describe('WebSocket /api/v1/ws', () => {
     })
   })
 
-  it('引擎 emit 的事件归一化后推给客户端，带递增 seq', async () => {
+  it('引擎的回合事件归一化后推给客户端，带递增 seq', async () => {
     const ctx = await setup()
     servers.push(ctx.held)
     const c = await connect(ctx.wsUrl, '?session=s1')
-    const engine = (await ctx.registry.ensure('s1')) as FakeEngine
-    engine.emit('message', assistantFrame('a1', 'hi'))
-    engine.emit('message', streamEvent({ type: 'message_start', message: { id: 'm2', model: 'm' } }))
-    engine.emit('message', streamEvent({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }))
-    engine.emit('message', streamEvent({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'h' } }))
+    const engine = await engineFor(ctx)
+    engine.turnEvent(assistantFrame('a1', 'hi'))
+    engine.turnEvent(streamEvent({ type: 'message_start', message: { id: 'm2', model: 'm' } }))
+    engine.turnEvent(streamEvent({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }))
+    engine.turnEvent(streamEvent({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'h' } }))
     await waitFor(() => {
       const events = c.messages.map((m) => m.event)
       expect(events).toContain('message')
@@ -133,8 +107,8 @@ describe('WebSocket /api/v1/ws', () => {
     servers.push(ctx.held)
     const c1 = await connect(ctx.wsUrl, '?session=s1')
     const c2 = await connect(ctx.wsUrl, '?session=s1')
-    const engine = (await ctx.registry.ensure('s1')) as FakeEngine
-    engine.emit('message', assistantFrame('a1', 'hi'))
+    const engine = await engineFor(ctx)
+    engine.turnEvent(assistantFrame('a1', 'hi'))
     await waitFor(() => {
       expect(c1.messages.some((m) => m.event === 'message')).toBe(true)
       expect(c2.messages.some((m) => m.event === 'message')).toBe(true)
@@ -146,10 +120,10 @@ describe('WebSocket /api/v1/ws', () => {
     servers.push(ctx.held)
     const c1 = await connect(ctx.wsUrl, '?session=s1')
     const c2 = await connect(ctx.wsUrl, '?session=s1')
-    const engine = (await ctx.registry.ensure('s1')) as FakeEngine
+    const engine = await engineFor(ctx)
     c1.ws.close()
     await new Promise((r) => setTimeout(r, 50))
-    engine.emit('message', assistantFrame('a2', 'hi')) // 若服务器崩了这条收不到
+    engine.turnEvent(assistantFrame('a2', 'hi')) // 若服务器崩了这条收不到
     await waitFor(() => {
       expect(c2.messages.some((m) => m.event === 'message')).toBe(true)
     })
@@ -158,7 +132,7 @@ describe('WebSocket /api/v1/ws', () => {
   it('客户端断开后引擎不被回收（用户可能只是刷新页面）', async () => {
     const ctx = await setup()
     servers.push(ctx.held)
-    const engine = (await ctx.registry.ensure('s1')) as FakeEngine
+    const engine = await engineFor(ctx)
     const c = await connect(ctx.wsUrl, '?session=s1')
     c.ws.close()
     await new Promise((r) => setTimeout(r, 100))
@@ -170,8 +144,8 @@ describe('WebSocket /api/v1/ws', () => {
     const ctx = await setup()
     servers.push(ctx.held)
     const c1 = await connect(ctx.wsUrl, '?session=s1')
-    const engine = (await ctx.registry.ensure('s1')) as FakeEngine
-    engine.emit('message', assistantFrame('n1', 'one'))
+    const engine = await engineFor(ctx)
+    engine.turnEvent(assistantFrame('n1', 'one'))
     // 必须等 n1 真到了再记 seq，否则记到的是 state 事件的 seq（竞态）
     await waitFor(() =>
       expect(c1.messages.some((m) => (m.data as { uuid?: string }).uuid === 'n1')).toBe(true),
@@ -180,8 +154,8 @@ describe('WebSocket /api/v1/ws', () => {
     c1.ws.close()
 
     // 断开期间又出了两条 —— /history 补不上这段（jsonl 落盘有延迟）
-    engine.emit('message', assistantFrame('n2', 'two'))
-    engine.emit('message', assistantFrame('n3', 'three'))
+    engine.turnEvent(assistantFrame('n2', 'two'))
+    engine.turnEvent(assistantFrame('n3', 'three'))
 
     const c2 = await connect(ctx.wsUrl, `?session=s1&since=${lastSeq}`)
     await waitFor(() => {

@@ -7,7 +7,7 @@
  *
  * 用法：node --import tsx fake-server.mts <fake-claude-path> [--exit-normally]
  */
-import { Engine } from '../../src/engine/engine.js'
+import { Engine } from '../../src/engine/index.js'
 
 const fake = process.argv[2]!
 const engine = new Engine({ bin: process.execPath, args: [fake, '--hold'] })

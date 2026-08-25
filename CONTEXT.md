@@ -46,6 +46,20 @@ _Avoid_：subagent 消息、子对话、branch
 引擎反向发起的工具使用许可请求，必须在超时前得到 allow / deny 之一。
 _Avoid_：permission、confirm dialog、can_use_tool（那是协议里的名字）
 
+**Frame**：
+引擎 stdin / stdout 上的一行 NDJSON，CC 的原始输入输出。只有 `src/engine` 见到它。
+_Avoid_：message（那是归一化后的）、packet、raw event
+
+**Turn event**：
+引擎交给服务器的一帧：stdout 上除控制帧以外的一切（system / stream_event /
+assistant / user / result …），类型从 SDK 的 SDKMessage 派生。
+_Avoid_：raw frame、stdout message、engine message
+
+**Control request**：
+我们与引擎之间有应答的请求（set_model / list_models / get_usage …），
+由引擎配对 request_id 并在首次请求前完成 initialize 握手。
+_Avoid_：command、RPC、控制帧（那是信封）
+
 **History**：
 从 session 的 jsonl 读出并归一化成 Message 的过去消息，按 cursor 分页。
 _Avoid_：transcript、log、记录

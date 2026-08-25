@@ -55,7 +55,7 @@ SDK 注释明确写了：`initialize` 的响应里带 `pending_permission_reques
 
 不做去重 → 浏览器弹两个一模一样的审批框，用户点了一个另一个还在。
 
-**对策**：按 request_id 去重，M7 加测试。同时要处理**取消**——
+**对策**：按 request_id 去重（引擎层，`test/engine/protocol.spec.ts`）。同时要处理**取消**——
 对方可能撤回还在飞的请求（轮次被中断时那个 `can_use_tool` 就不需要答了），
 收到取消要停止等待并忽略后到的 response。
 

@@ -5,7 +5,6 @@
  * 引擎立即登记（jsonl 落盘前 prompt/history 都得能用）。
  */
 import { describe, it, expect, afterEach } from 'vitest'
-import { EventEmitter } from 'node:events'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -13,16 +12,7 @@ import type { Hono } from 'hono'
 import { createApp } from '#/server/app.js'
 import { SessionHub } from '#/server/hub.js'
 import { SessionRegistry } from '#/server/registry.js'
-import type { EngineFactoryOptions } from '#/server/registry.js'
-
-class FakeEngine extends EventEmitter {
-  sent: unknown[] = []
-  async start() {}
-  async stop() {}
-  send(frame: unknown) {
-    this.sent.push(frame)
-  }
-}
+import { fakeEngines } from '../fixtures/fake-engine.js'
 
 const tmpdirs: string[] = []
 afterEach(() => {
@@ -32,18 +22,8 @@ afterEach(() => {
 function setup() {
   const dir = mkdtempSync(join(tmpdir(), 'cc-web-create-'))
   tmpdirs.push(dir)
-  const hub = new SessionHub()
-  const calls: { id: string; opts: EngineFactoryOptions | undefined }[] = []
-  const engines = new Map<string, FakeEngine>()
-  const registry = new SessionRegistry({
-    hub,
-    factory: (id, opts) => {
-      calls.push({ id, opts })
-      const e = new FakeEngine()
-      engines.set(id, e)
-      return e
-    },
-  })
+  const { factory, engines, calls } = fakeEngines()
+  const registry = new SessionRegistry({ hub: new SessionHub(), factory })
   const app = createApp({ projectsRoot: dir, registry })
   return { app, registry, calls, engines, dir }
 }
@@ -75,7 +55,7 @@ describe('POST /api/v1/sessions（新建会话）', () => {
     const { body: p } = await postJson(app, `/api/v1/sessions/${id}/prompt`, { text: 'hi' })
     expect(p.code).toBe(0)
     expect(calls).toHaveLength(1) // 没有第二次 spawn
-    expect(engines.get(id)!.sent).toHaveLength(1)
+    expect(engines.get(id)!.prompts).toHaveLength(1)
   })
 
   it('新会话 jsonl 落盘前 history 回空页，不是 404', async () => {

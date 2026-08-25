@@ -142,6 +142,11 @@ media_type, data}}, {type:'text', text}]}}` —— 引擎正确识图（发红�
 颜色，回答「红色」）。纯图无文字也接受。这与 sdk.d.ts 的 SDKUserMessage
 注释一致（content 支持 text/image/document/tool_result 块）。
 
+**result 帧的字段随版本漂移**（D8 重录 probe 时对比，2026-08）：2.1.243 的
+`result` 比 2.1.241 多一个顶层 `queued_turn_count`，其余帧的类型和顶层键
+完全一致。我们不用它；记在这里是因为它正是「重跑 probe → diff fixture」
+该抓到的那种变化。
+
 **set_permission_mode 的 bypass 门槛**（M19 实测，基线 2.1.241）：
 运行时切到 `bypassPermissions` 要求进程启动时带
 `--allow-dangerously-skip-permissions`（把 bypass 变成可选项，默认行为
@@ -177,6 +182,11 @@ CC 更新模型列表时前端自动跟上。
 其它值得知道但暂时不用的：`rewind_files`、`stop_task`、
 `background_tasks`、`reload_plugins`、`reload_skills`、`mcp_*`、
 `request_user_dialog`、`elicitation`。
+
+**实现位置（D8）**：信封、request_id 配对、initialize 握手、
+`pending_permission_requests` 去重、`control_cancel_request` 都在
+`src/engine/engine.ts`；服务器只见 `EngineLike` 的 approval /
+approval-cancel 事件和 `control()` 的 Promise。下面两个边角就是在那里处理的。
 
 ### 两个必须处理的边角
 
@@ -261,8 +271,10 @@ M10 的交接用 `SessionEnd`。
 ```sh
 pnpm up @anthropic-ai/claude-agent-sdk   # 类型跟着二进制走
 pnpm typecheck                            # 类型变了这里先红
-pnpm test:contract                        # 重跑 probe
-git diff test/fixtures/recorded/          # 运行时形状变了没
+pnpm test:contract                        # 重跑 probe（用我们的 Engine 驱动真 claude）
+git diff test/fixtures/recorded/          # 运行时形状变了没（meta.json 带版本和 spawn 参数）
+pnpm test                                 # protocol.spec 回放新录的 control.ndjson；
+                                          # live.spec 的黄金文件 *.events.json 该不该变
 ```
 
 **`pnpm typecheck` 会先红**——这是免费的早期预警，比 probe 还早。
