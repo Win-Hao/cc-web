@@ -24,8 +24,10 @@ import { parseSessionFile } from '#/sessions/parse.js'
 import { aggregateSessionUsage } from '#/usage/aggregate.js'
 import { findSubagentFile, listSubagents } from '#/sessions/subagents.js'
 import { normalizeHistory, paginate } from './message/index.js'
-import { SessionBusyError, ControlRequestError, ApprovalExpiredError } from './registry.js'
-import type { PromptImage, SessionRegistry } from './registry.js'
+import { ControlRequestError } from '#/engine/index.js'
+import type { ControlSubtype, PermissionMode, PromptImage } from '#/engine/index.js'
+import { SessionBusyError, ApprovalExpiredError } from './registry.js'
+import type { SessionRegistry } from './registry.js'
 import { bearerAuth } from '#/auth/middleware.js'
 
 export interface AppDeps {
@@ -74,6 +76,19 @@ function ok(data: unknown) {
 
 function fail(code: number, msg: string) {
   return { code, msg, data: null, trace_id: randomUUID() }
+}
+
+/**
+ * 锦上添花的查询（get_usage / get_context_usage）：拿不到（超时 / 对端
+ * error / 引擎死）→ null，不抛 —— 用量绝不能挂（D5/R4）。
+ */
+async function softControl(registry: SessionRegistry, sessionId: string, subtype: ControlSubtype): Promise<unknown | null> {
+  try {
+    return await registry.control(sessionId, subtype)
+  } catch (err) {
+    if (err instanceof ControlRequestError) return null
+    throw err
+  }
 }
 
 /** 占位 UI（D2）：没跑过 `pnpm build:web` 时的兜底，保证开箱能用 */
@@ -182,7 +197,7 @@ export function createApp(deps: AppDeps) {
       const live = registry.liveSessionIds()[0]
       const id = live ?? (await registry.create(homedir()))
       try {
-        const payload = await registry.getUsage(id)
+        const payload = await softControl(registry, id, 'get_usage')
         if (payload !== null) planCache = { payload, fetched_at: Date.now() }
       } finally {
         if (live === undefined) void registry.get(id)?.stop()
@@ -200,11 +215,11 @@ export function createApp(deps: AppDeps) {
       metaInflight = (async () => {
         const id = await registry.create(homedir())
         try {
-          const modelsPayload = (await registry.listModels(id)) as { models?: unknown } | null
-          const settings = await registry.getSettings(id).catch(() => null)
-          const ctx = (await registry.getContextUsage(id)) as { maxTokens?: number } | null
+          const modelsPayload = (await registry.control(id, 'list_models')) as { models?: unknown } | null
+          const settings = await registry.control(id, 'get_settings').catch(() => null)
+          const ctx = (await softControl(registry, id, 'get_context_usage')) as { maxTokens?: number } | null
           // 顺手把套餐额度也拉了（M34）：面板秒开，永不为它额外起引擎
-          const usage = await registry.getUsage(id)
+          const usage = await softControl(registry, id, 'get_usage')
           if (usage !== null) planCache = { payload: usage, fetched_at: Date.now() }
           return {
             models: modelsPayload?.models ?? [],
@@ -510,7 +525,7 @@ export function createApp(deps: AppDeps) {
         : null
     if (typeof model !== 'string' || model === '') return c.json(fail(40001, 'model required'))
     try {
-      await deps.registry.setModel(c.req.param('id'), model)
+      await deps.registry.control(c.req.param('id'), 'set_model', { model })
       return c.json(ok({}))
     } catch (err) {
       return c.json(controlFail(err))
@@ -526,7 +541,8 @@ export function createApp(deps: AppDeps) {
         : null
     if (typeof mode !== 'string' || mode === '') return c.json(fail(40002, 'mode required'))
     try {
-      await deps.registry.setPermissionMode(c.req.param('id'), mode)
+      // 合法值由 CC 判定（非法 → error 应答 → 信封错误码），这里不复制它的列表
+      await deps.registry.control(c.req.param('id'), 'set_permission_mode', { mode: mode as PermissionMode })
       return c.json(ok({}))
     } catch (err) {
       return c.json(controlFail(err))
@@ -543,7 +559,8 @@ export function createApp(deps: AppDeps) {
         : null
     if (typeof effort !== 'string' || effort === '') return c.json(fail(40001, 'effort required'))
     try {
-      await deps.registry.applyFlagSettings(c.req.param('id'), { effortLevel: effort })
+      // sdk.d.ts：effortLevel 的 'max' 是会话级的，只在支持的模型上生效，永不落盘
+      await deps.registry.control(c.req.param('id'), 'apply_flag_settings', { settings: { effortLevel: effort } })
       return c.json(ok({}))
     } catch (err) {
       return c.json(controlFail(err))
@@ -554,7 +571,7 @@ export function createApp(deps: AppDeps) {
   app.get('/api/v1/sessions/:id/settings', async (c) => {
     if (deps.registry === undefined) return c.json(fail(50001, 'registry not configured'))
     try {
-      return c.json(ok((await deps.registry.getSettings(c.req.param('id'))) ?? {}))
+      return c.json(ok((await deps.registry.control(c.req.param('id'), 'get_settings')) ?? {}))
     } catch (err) {
       return c.json(controlFail(err))
     }
@@ -564,7 +581,7 @@ export function createApp(deps: AppDeps) {
     if (deps.registry === undefined) return c.json(fail(50001, 'registry not configured'))
     try {
       // list_models 的 response payload（含 models），响应体可能缺省
-      const payload = (await deps.registry.listModels(c.req.param('id'))) ?? {}
+      const payload = (await deps.registry.control(c.req.param('id'), 'list_models')) ?? {}
       return c.json(ok(payload))
     } catch (err) {
       return c.json(controlFail(err))
@@ -615,7 +632,7 @@ export function createApp(deps: AppDeps) {
     const id = c.req.param('id')
     // 引擎活着走 get_usage（含官方成本）；拿不到或引擎已回收 → jsonl 聚合
     if (deps.registry?.get(id) !== undefined) {
-      const payload = await deps.registry.getUsage(id)
+      const payload = await softControl(deps.registry, id, 'get_usage')
       if (typeof payload === 'object' && payload !== null) {
         // 顺手刷新套餐额度缓存（M36）：每轮对话结束都会走到这里，
         // 面板数据新鲜度因此 = 最近一轮，零额外请求
@@ -651,7 +668,7 @@ export function createApp(deps: AppDeps) {
     const id = c.req.param('id')
     if (deps.registry === undefined) return c.json(ok(null))
     if (deps.registry.get(id) !== undefined) {
-      const payload = await deps.registry.getContextUsage(id)
+      const payload = await softControl(deps.registry, id, 'get_context_usage')
       if (typeof payload === 'object' && payload !== null) {
         const p = payload as Record<string, unknown>
         return c.json(
@@ -742,7 +759,7 @@ export function createApp(deps: AppDeps) {
     // 只查已有活引擎的会话 —— 用量是锦上添花，绝不为它 spawn 引擎（D5）。
     // 没有这个守卫，前端每切一个会话就会拉起一个 claude 进程。
     if (deps.registry.get(sessionId) === undefined) return c.json(ok(null))
-    const payload = await deps.registry.getUsage(sessionId)
+    const payload = await softControl(deps.registry, sessionId, 'get_usage')
     if (typeof payload !== 'object' || payload === null) return c.json(ok(null))
     const p = payload as Record<string, unknown>
     // rate_limits_available: false 是正常情况（API key / Bedrock / Vertex），

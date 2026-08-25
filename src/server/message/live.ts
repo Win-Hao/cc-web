@@ -9,7 +9,7 @@
  * 帧的事实来源：test/fixtures/recorded/*.ndjson（D4）。已知顺序：
  * 每个块的最终 assistant 帧先于它的 content_block_stop 到达；一帧一块。
  */
-import type { PromptImage } from '../registry.js'
+import type { PromptImage, TurnEvent } from '#/engine/index.js'
 import { applyResult, num, rec, sanitizeValue, splitContent, str, textOf, toolUseBlock } from './blocks.js'
 import type { Block, Message, MessageEvent, ToolUseBlock, TurnEnd } from './types.js'
 
@@ -60,7 +60,8 @@ export class LiveTurn {
     return new Set(this.open.keys())
   }
 
-  ingest(frame: unknown): MessageEvent[] {
+  /** 引擎的一个回合事件（D8：已分型的帧；运行时形状仍防御性解析，R3） */
+  ingest(frame: TurnEvent): MessageEvent[] {
     const f = rec(frame)
     if (f === null) return []
     if (typeof f.parent_tool_use_id === 'string') return this.ingestSubagent(f)

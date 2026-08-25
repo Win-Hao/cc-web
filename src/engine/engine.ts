@@ -1,208 +1,304 @@
 /**
- * M1：引擎 —— 整个项目里唯一跟 CC 进程打交道的地方（D1）。
+ * D8：Engine —— 协议层，整个项目里唯一认识 CC 帧的地方。
  *
- * 生命周期三条铁律（RISKS R1）：
- *   1. spawn 时 `detached: true`，子进程当进程组组长 —— 这样才能
- *      `kill(-pid)` 按组杀，孙进程（CC 自己 spawn 的东西）才不会漏。
- *      「不 detach」在这里是反模式。
- *   2. stop() 按进程组杀，SIGTERM 之后不死的升级 SIGKILL。
- *   3. 服务器进程退出路径全挂清理（exit / SIGINT / SIGTERM），
- *      子进程跟服务器同生共死，绝不 spawn 完就放手。
+ * 服务器拿到的是四个动作（prompt / interrupt / control / answerApproval）
+ * 和六种事件（turn-event / turn-end / approval / approval-cancel / error / exit）；
+ * 信封、request_id 配对、initialize 握手、审批去重、fork 的新 id 全关在这里。
+ * 帧的事实来源是 test/fixtures/recorded/*（D4），本文件发出的帧结构由
+ * 契约测试钉死。
  *
- * 可测性前提（TDD M0）：bin/args 必须注入，引擎自己不知道
- * 「真实 claude 在哪」。
+ * 控制请求（M6）：对方回 control_response 才 resolve；每个请求挂超时，
+ * 等响应期间引擎死了也 reject —— 任何情况下都不永久挂起。第一个非
+ * initialize 的请求会先自动握手（同一进程只握一次，并发共享）。
  *
- * 事件：
- *   'message'  stdout 的每一帧 NDJSON（已 JSON.parse）
- *   'error'    spawn 失败 / 意外退出（非 0 且不是 stop() 杀的）/ 坏帧。
- *              引擎内置兜底 listener 把错误存进 lastError —— EventEmitter
- *              的 'error' 没人听会 throw 崩进程，那样比静默更糟。
- *   'exit'     进程 close（code, signal），正常死亡和被杀都会发
+ * 审批（M7，R5）：can_use_tool 可能从 initialize 响应的
+ * pending_permission_requests 和实时帧各来一次 —— 同一 requestId 只
+ * emit 一次 approval；对方撤回（control_cancel_request）→ approval-cancel。
+ * 超时 / 自动 deny 是策略，不在这里（registry）。
  */
-import { spawn } from 'node:child_process'
-import type { ChildProcess } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events'
-import { NdjsonParser } from './ndjson.js'
+import { EngineProcess } from './process.js'
+import type { EngineProcessOptions, EngineTransport, ProcessSpec } from './process.js'
+import { ControlRequestError } from './types.js'
+import type {
+  ApprovalDecision,
+  ControlArgs,
+  ControlRequest,
+  ControlSubtype,
+  EngineEvents,
+  EngineLike,
+  PromptImage,
+  TurnEvent,
+  TurnResult,
+} from './types.js'
 
-export interface EngineOptions {
-  bin: string
-  args: string[]
-  /** resume 时必须设成会话原 cwd（从 jsonl 行读，D3），否则 CLAUDE.md 全错 */
-  cwd?: string
+export interface ProtocolOptions {
+  /** 控制请求超时，默认 10s */
+  controlTimeoutMs?: number
+  /** request_id 生成器（probe 用固定序号让 fixture 稳定），默认 randomUUID */
+  newRequestId?: () => string
 }
 
-export class Engine extends EventEmitter {
-  private child: ChildProcess | null = null
-  private stopping = false
-  private readonly parser: NdjsonParser
-  private readonly opts: EngineOptions
-  /** 最近一次 error（兜底 listener 存，见类注释） */
+/** 生产：bin/args 起真进程；测试：注入 transport，不碰进程 */
+export type EngineOptions = ProtocolOptions & (EngineProcessOptions | { transport: EngineTransport })
+
+interface PendingControl {
+  resolve: (response: unknown) => void
+  reject: (err: Error) => void
+  timer: ReturnType<typeof setTimeout>
+}
+
+interface SessionWaiter {
+  resolve: (id: string) => void
+  reject: (err: Error) => void
+}
+
+export class Engine extends EventEmitter<EngineEvents> implements EngineLike {
+  /** 起进程用的 bin/args/cwd（注入 transport 时为 null）；工厂测试和排障用 */
+  readonly spec: Readonly<ProcessSpec> | null
+  private readonly proc: EngineTransport
+  private readonly controlTimeoutMs: number
+  private readonly newRequestId: () => string
+  private readonly pending = new Map<string, PendingControl>()
+  private initializing: Promise<unknown> | null = null
+  private initialized = false
+  private initResponse: unknown = undefined
+  /** 还没答复 / 撤回的审批 requestId：去重用（R5） */
+  private readonly openApprovals = new Set<string>()
+  private sessionId: string | null = null
+  private sessionWaiters: SessionWaiter[] = []
+  private exited = false
+  /** 最近一次 error（兜底 listener 存：'error' 没人听会 throw 崩进程） */
   lastError: Error | null = null
-  /** stderr 尾部环形缓冲（M40）：意外死亡时拼进错误信息，排障用 */
-  private stderrBuf = ''
 
   constructor(opts: EngineOptions) {
     super()
-    this.opts = opts
-    this.parser = new NdjsonParser({
-      onMessage: (m) => this.emit('message', m),
-      onError: (err, raw) =>
-        this.emitError(new Error(`bad NDJSON frame: ${err.message} (raw: ${raw.slice(0, 200)})`)),
-    })
-    this.on('error', (err: Error) => {
+    if ('transport' in opts) {
+      this.proc = opts.transport
+      this.spec = null
+    } else {
+      this.proc = new EngineProcess(opts)
+      this.spec = { bin: opts.bin, args: opts.args, ...(opts.cwd !== undefined ? { cwd: opts.cwd } : {}) }
+    }
+    this.controlTimeoutMs = opts.controlTimeoutMs ?? 10_000
+    this.newRequestId = opts.newRequestId ?? randomUUID
+    this.on('error', (err) => {
       this.lastError = err
     })
+    this.proc.on('frame', (frame) => this.route(frame))
+    this.proc.on('error', (err) => this.emit('error', err))
+    this.proc.on('exit', (code, signal) => this.onExit(code, signal))
   }
 
   get pid(): number | null {
-    return this.child?.pid ?? null
+    return this.proc.pid
   }
 
   /** stderr 尾部（最多 4KB），诊断用 */
   get stderrTail(): string {
-    return this.stderrBuf
+    return this.proc.stderrTail
   }
 
-  /** spawn 成功（'spawn' 事件）后 resolve；spawn 失败 reject 且 emit error。 */
   start(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const child = spawn(this.opts.bin, this.opts.args, {
-        ...(this.opts.cwd !== undefined ? { cwd: this.opts.cwd } : {}),
-        detached: true,
-        stdio: ['pipe', 'pipe', 'pipe'],
-      })
-      this.child = child
-      registerForCleanup(this)
+    return this.proc.start()
+  }
 
-      child.once('error', (err) => {
-        this.emitError(err)
-        reject(err)
-      })
-      child.once('spawn', () => resolve())
+  /** 按进程组杀：SIGTERM → 等 close → 超时升级 SIGKILL（process.ts） */
+  stop(timeoutMs?: number): Promise<void> {
+    return this.proc.stop(timeoutMs)
+  }
 
-      // EPIPE 守卫（M38）：快速退出的 CLI（坏登录态、
-      // 模型不存在）会让 stdin 写入变成未处理的 stream error，直接崩掉
-      // 服务器进程。EPIPE/已销毁 属于「进程正在死」，close 处理器会报；
-      // 其它错误走正常 error 通道（内置兜底 listener 保证不裸抛）。
-      child.stdin!.on('error', (err: NodeJS.ErrnoException) => {
-        if (err.code !== 'EPIPE' && err.code !== 'ERR_STREAM_DESTROYED') this.emitError(err)
-      })
+  /* ── 动作 ─────────────────────────────────────────────── */
 
-      // setEncoding 让 Node 的 StringDecoder 处理跨 chunk 的 UTF-8 多字节
-      // 字符 —— 逐 chunk 各自 toString 会把劈开的汉字解码成替换符（乱码）
-      child.stdout!.setEncoding('utf8')
-      child.stdout!.on('data', (c: string) => this.parser.push(c))
-      // stderr 必须读掉（不读会把管道写满阻塞子进程），同时留尾部 4KB：
-      // 引擎意外死亡时 code=1 本身毫无信息量，stderr 尾巴才是死因（M40）
-      child.stderr!.setEncoding('utf8')
-      child.stderr!.on('data', (c: string) => {
-        this.stderrBuf = (this.stderrBuf + c).slice(-4096)
-      })
+  /** 图在前文在后（Messages API 的推荐顺序）；纯图不发空 text 块（PROTOCOL §2） */
+  prompt(text: string, images: PromptImage[] = []): void {
+    const content: unknown[] = images.map((img) => ({
+      type: 'image',
+      source: { type: 'base64', media_type: img.media_type, data: img.data },
+    }))
+    if (text !== '') content.push({ type: 'text', text })
+    this.proc.write({ type: 'user', message: { role: 'user', content } })
+  }
 
-      child.on('close', (code, signal) => {
-        unregisterForCleanup(this)
-        this.parser.end()
-        if (!this.stopping && code !== 0) {
-          const tail = this.stderrBuf.trim().slice(-500)
-          this.emitError(
-            new Error(
-              `engine exited unexpectedly: code=${code} signal=${signal}` +
-                (tail !== '' ? `\nstderr: ${tail}` : ''),
-            ),
-          )
-        }
-        this.emit('exit', code, signal)
-      })
+  /** 中断不等应答：对端的 control_response 到了也只是被忽略 */
+  interrupt(): void {
+    this.proc.write(controlRequest(this.newRequestId(), { subtype: 'interrupt' }))
+  }
+
+  async control<S extends ControlSubtype>(subtype: S, ...[payload]: ControlArgs<S>): Promise<unknown> {
+    if (subtype === 'initialize') return this.ensureInitialized()
+    await this.ensureInitialized()
+    return this.request({ subtype, ...(payload ?? {}) } as ControlRequest)
+  }
+
+  /** decision 原样进 control_response（PermissionResult 形状，sdk.d.ts） */
+  answerApproval(requestId: string, decision: ApprovalDecision): void {
+    this.openApprovals.delete(requestId)
+    this.proc.write({
+      type: 'control_response',
+      response: { subtype: 'success', request_id: requestId, response: decision },
     })
   }
 
   /**
-   * 写一帧进引擎 stdin（user 消息 / control_request 都是这条路）。
-   * 引擎没在跑时调用直接抛 —— 调用方（registry）负责先 ensure。
+   * CC 分配的 session id：从首个带顶层 session_id 的帧读（M55 真机实测：
+   * spawn 后立即有 system/hook_started 之类的帧带它，不用等 init）。
    */
-  send(frame: unknown): void {
-    const stdin = this.child?.stdin
-    if (stdin === null || stdin === undefined || !stdin.writable) {
-      throw new Error('engine is not running')
+  awaitSessionId(timeoutMs = 15_000): Promise<string> {
+    if (this.sessionId !== null) return Promise.resolve(this.sessionId)
+    if (this.exited) return Promise.reject(new Error('engine exited before reporting session id'))
+    return new Promise((resolve, reject) => {
+      const waiter: SessionWaiter = {
+        resolve: (id) => {
+          clearTimeout(timer)
+          resolve(id)
+        },
+        reject: (err) => {
+          clearTimeout(timer)
+          reject(err)
+        },
+      }
+      const timer = setTimeout(() => {
+        this.sessionWaiters = this.sessionWaiters.filter((w) => w !== waiter)
+        reject(new Error('timed out waiting for session id'))
+      }, timeoutMs)
+      this.sessionWaiters.push(waiter)
+    })
+  }
+
+  /* ── 控制协议（M6）───────────────────────────────────── */
+
+  /** 幂等握手：同一进程只握一次，并发调用共享同一次 */
+  private ensureInitialized(): Promise<unknown> {
+    if (this.initialized) return Promise.resolve(this.initResponse)
+    if (this.initializing === null) {
+      this.initializing = this.request({ subtype: 'initialize' })
+        .then((response) => {
+          this.initialized = true
+          this.initResponse = response
+          return response
+        })
+        .finally(() => {
+          this.initializing = null
+        })
     }
-    try {
-      stdin.write(JSON.stringify(frame) + '\n')
-    } catch {
-      // writable 检查和写入之间的竞态窗口：进程刚好死了 → 统一成
-      // 「没在跑」错误，调用方（registry）已有处理路径
-      throw new Error('engine is not running')
+    return this.initializing
+  }
+
+  /** 发一个 control_request 并挂起等匹配的 control_response（超时 / 引擎死都 reject） */
+  private request(request: ControlRequest): Promise<unknown> {
+    const requestId = this.newRequestId()
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(requestId)
+        reject(new ControlRequestError(`control request timed out: ${request.subtype}`))
+      }, this.controlTimeoutMs)
+      this.pending.set(requestId, { resolve, reject, timer })
+      try {
+        this.proc.write(controlRequest(requestId, request))
+      } catch (err) {
+        clearTimeout(timer)
+        this.pending.delete(requestId)
+        reject(err instanceof Error ? err : new Error(String(err)))
+      }
+    })
+  }
+
+  /* ── 帧路由 ──────────────────────────────────────────── */
+
+  private route(frame: unknown): void {
+    const f = rec(frame)
+    if (f === null) return
+    if (typeof f.session_id === 'string' && f.session_id !== '') this.observeSessionId(f.session_id)
+    switch (f.type) {
+      case 'control_response':
+        return this.onControlResponse(f)
+      case 'control_request':
+        return this.onControlRequest(f)
+      case 'control_cancel_request':
+        return this.onControlCancel(f)
+      case 'keep_alive':
+        return // 传输层心跳，不是回合的一部分
+      default:
+        // 未知类型也透传：上游加帧是常态，归一化层会忽略它不认识的
+        this.emit('turn-event', frame as TurnEvent)
+        if (f.type === 'result') this.emit('turn-end', frame as TurnResult)
+    }
+  }
+
+  /** control_response → 等待中的请求。不认识的 request_id（interrupt 的应答、迟到的）忽略 */
+  private onControlResponse(f: Record<string, unknown>): void {
+    const resp = rec(f.response)
+    if (resp === null) return
+    // 接入已初始化的会话：响应里可能带还没答复的审批请求（R5）
+    if (Array.isArray(resp.pending_permission_requests)) {
+      for (const req of resp.pending_permission_requests) {
+        const r = rec(req)
+        if (r !== null) this.onControlRequest(r)
+      }
+    }
+    if (typeof resp.request_id !== 'string') return
+    const p = this.pending.get(resp.request_id)
+    if (p === undefined) return
+    this.pending.delete(resp.request_id)
+    clearTimeout(p.timer)
+    if (resp.subtype === 'success') {
+      p.resolve(resp.response)
+    } else {
+      p.reject(new ControlRequestError(typeof resp.error === 'string' ? resp.error : 'control request failed'))
     }
   }
 
   /**
-   * 按进程组杀：SIGTERM → 等 close → 超时升级 SIGKILL。
-   * stop() 导致的退出不 emit error（这是正常死亡）。
+   * CC → 我们的反向请求。can_use_tool 转 approval（按 requestId 去重）；
+   * 其它 subtype（hook_callback / mcp_message / elicitation / request_user_dialog）
+   * 我们没登记过对应能力，按协议不答复。
    */
-  async stop(timeoutMs = 5000): Promise<void> {
-    const child = this.child
-    // exitCode 只覆盖正常退出；被信号杀死的进程 exitCode 是 null、
-    // signalCode 才有值 —— 漏了它会去等一个永不再发的 close，挂死
-    if (child === null || child.exitCode !== null || child.signalCode !== null) return
-    this.stopping = true
-    const closed = new Promise<void>((r) => child.once('close', () => r()))
-    this.killGroup('SIGTERM')
-    const timedOut = await Promise.race([
-      closed.then(() => false),
-      new Promise<true>((r) => setTimeout(() => r(true), timeoutMs)),
-    ])
-    if (timedOut) {
-      this.killGroup('SIGKILL')
-      await closed
+  private onControlRequest(f: Record<string, unknown>): void {
+    const request = rec(f.request)
+    if (request === null || request.subtype !== 'can_use_tool' || typeof f.request_id !== 'string') return
+    if (this.openApprovals.has(f.request_id)) return
+    this.openApprovals.add(f.request_id)
+    this.emit('approval', {
+      requestId: f.request_id,
+      tool_name: typeof request.tool_name === 'string' ? request.tool_name : null,
+      input: request.input ?? null,
+    })
+  }
+
+  /** 对方撤回还在飞的请求：停止等待，之后不再答复。没见过的 id 忽略 */
+  private onControlCancel(f: Record<string, unknown>): void {
+    if (typeof f.request_id !== 'string') return
+    if (this.openApprovals.delete(f.request_id)) this.emit('approval-cancel', f.request_id)
+  }
+
+  private observeSessionId(id: string): void {
+    if (this.sessionId !== null) return
+    this.sessionId = id
+    for (const w of this.sessionWaiters.splice(0)) w.resolve(id)
+  }
+
+  private onExit(code: number | null, signal: NodeJS.Signals | null): void {
+    this.exited = true
+    // 等待中的控制请求全部 reject（不永久挂起），握手状态作废
+    for (const p of this.pending.values()) {
+      clearTimeout(p.timer)
+      p.reject(new ControlRequestError('engine exited while awaiting control_response'))
     }
-  }
-
-  /** 同步杀进程组 —— 'exit' 钩子里不能 await，只能用它。 */
-  killGroupSync(): void {
-    this.killGroup('SIGTERM')
-  }
-
-  private killGroup(signal: NodeJS.Signals): void {
-    const pid = this.child?.pid
-    if (pid === undefined) return
-    try {
-      process.kill(-pid, signal)
-    } catch {
-      // ESRCH = 进程组已经没了，正是我们想要的状态
-    }
-  }
-
-  private emitError(err: Error): void {
-    this.emit('error', err)
+    this.pending.clear()
+    this.initialized = false
+    this.initializing = null
+    this.openApprovals.clear()
+    for (const w of this.sessionWaiters.splice(0)) w.reject(new Error('engine exited before reporting session id'))
+    this.emit('exit', code, signal)
   }
 }
 
-/* ── 服务器退出清理（R1：退出路径全挂）──────────────────────────
- * 模块级注册一次，所有活着的引擎共享。'exit' 事件里不能异步，
- * 所以只能同步 kill；SIGINT/SIGTERM 挂了 handler 后默认退出行为
- * 消失，必须清理完显式 process.exit。
- */
-const liveEngines = new Set<Engine>()
-let hooksInstalled = false
-
-function killAllLive(): void {
-  for (const e of liveEngines) e.killGroupSync()
+function controlRequest(requestId: string, request: ControlRequest): unknown {
+  return { type: 'control_request', request_id: requestId, request }
 }
 
-function registerForCleanup(e: Engine): void {
-  liveEngines.add(e)
-  if (hooksInstalled) return
-  hooksInstalled = true
-  process.once('exit', killAllLive)
-  process.on('SIGINT', () => {
-    killAllLive()
-    process.exit(130)
-  })
-  process.on('SIGTERM', () => {
-    killAllLive()
-    process.exit(143)
-  })
-}
-
-function unregisterForCleanup(e: Engine): void {
-  liveEngines.delete(e)
+function rec(v: unknown): Record<string, unknown> | null {
+  return typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : null
 }

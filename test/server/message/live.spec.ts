@@ -6,17 +6,21 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import type { TurnEvent } from '#/engine/index.js'
 import { LiveTurn } from '#/server/message/index.js'
 import type { Message, MessageEvent, ToolUseBlock } from '#/server/message/index.js'
 
 const RECORDED = fileURLToPath(new URL('../../fixtures/recorded/', import.meta.url))
 
-function frames(name: string): unknown[] {
+function frames(name: string): TurnEvent[] {
   return readFileSync(`${RECORDED}${name}.ndjson`, 'utf8')
     .split('\n')
     .filter((l) => l.trim() !== '')
-    .map((l) => JSON.parse(l) as unknown)
+    .map((l) => JSON.parse(l) as TurnEvent)
 }
+
+/** 手写的半截帧：归一化层本来就防御性解析，测试不必凑齐 SDK 类型的全部字段 */
+const ev = (frame: Record<string, unknown>): TurnEvent => frame as unknown as TurnEvent
 
 /** 固定时钟：每次读取 +250ms，黄金文件才稳定 */
 function clock(): () => number {
@@ -142,7 +146,7 @@ describe('LiveTurn：回合结束与异常', () => {
   it('result 到达时还没结果的 tool_use → canceled（中断）', () => {
     const turn = new LiveTurn(clock())
     feedUntilToolUse(turn)
-    const evs = turn.ingest({ type: 'result', subtype: 'error_during_execution', duration_ms: 1234, total_cost_usd: 0.01, usage: { output_tokens: 7 } })
+    const evs = turn.ingest(ev({ type: 'result', subtype: 'error_during_execution', duration_ms: 1234, total_cost_usd: 0.01, usage: { output_tokens: 7 } }))
     expect((messages(evs)[0]!.content[0] as ToolUseBlock).status).toBe('canceled')
     expect(evs[evs.length - 1]).toEqual({ event: 'turn_end', data: { duration_ms: 1234, output_tokens: 7, cost_usd: 0.01 } })
   })
@@ -152,13 +156,13 @@ describe('LiveTurn：回合结束与异常', () => {
     const before = feedUntilToolUse(turn)
     const toolKey = messages(before).filter((m) => !m.partial && m.content[0]?.type === 'tool_use')[0]!.key
     const toolId = (messages(before).find((m) => m.key === toolKey)!.content[0] as ToolUseBlock).id!
-    const sub = (type: string) => ({
+    const sub = (type: string) => ev({
       type, parent_tool_use_id: toolId, uuid: `sub-${type}`, session_id: 's',
       message: { role: type, content: [{ type: 'text', text: 'sub' }] },
     })
     const evs = [
       ...turn.ingest(sub('assistant')),
-      ...turn.ingest({ type: 'stream_event', parent_tool_use_id: toolId, event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'x' } } }),
+      ...turn.ingest(ev({ type: 'stream_event', parent_tool_use_id: toolId, event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'x' } } })),
       ...turn.ingest(sub('user')),
     ]
     expect(evs.every((e) => e.event === 'message' && e.data.key === toolKey)).toBe(true)
@@ -185,11 +189,11 @@ describe('LiveTurn：回合结束与异常', () => {
     let t = 1_000
     const turn = new LiveTurn(() => (t += 2_000))
     const evs = [
-      ...turn.ingest({ type: 'stream_event', parent_tool_use_id: null, event: { type: 'message_start', message: { id: 'msg_t', model: 'm', role: 'assistant', content: [] } } }),
-      ...turn.ingest({ type: 'stream_event', parent_tool_use_id: null, event: { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '', signature: '' } } }),
-      ...turn.ingest({ type: 'stream_event', parent_tool_use_id: null, event: { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: '先看' } } }),
-      ...turn.ingest({ type: 'stream_event', parent_tool_use_id: null, event: { type: 'content_block_delta', index: 0, delta: { type: 'signature_delta', signature: 'sig' } } }),
-      ...turn.ingest({ type: 'assistant', parent_tool_use_id: null, uuid: 'u-think', timestamp: 't', message: { id: 'msg_t', model: 'm', role: 'assistant', content: [{ type: 'thinking', thinking: '先看', signature: 'sig' }] } }),
+      ...turn.ingest(ev({ type: 'stream_event', parent_tool_use_id: null, event: { type: 'message_start', message: { id: 'msg_t', model: 'm', role: 'assistant', content: [] } } })),
+      ...turn.ingest(ev({ type: 'stream_event', parent_tool_use_id: null, event: { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '', signature: '' } } })),
+      ...turn.ingest(ev({ type: 'stream_event', parent_tool_use_id: null, event: { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: '先看' } } })),
+      ...turn.ingest(ev({ type: 'stream_event', parent_tool_use_id: null, event: { type: 'content_block_delta', index: 0, delta: { type: 'signature_delta', signature: 'sig' } } })),
+      ...turn.ingest(ev({ type: 'assistant', parent_tool_use_id: null, uuid: 'u-think', timestamp: 't', message: { id: 'msg_t', model: 'm', role: 'assistant', content: [{ type: 'thinking', thinking: '先看', signature: 'sig' }] } })),
     ]
     expect(evs.map((e) => e.event)).toEqual(['message', 'delta', 'message'])
     const final = messages(evs)[1]!

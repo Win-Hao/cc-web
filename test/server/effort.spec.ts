@@ -3,7 +3,6 @@
  * 带 effortLevel（sdk.d.ts；max 是会话级）。
  */
 import { describe, it, expect } from 'vitest'
-import { EventEmitter } from 'node:events'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -11,20 +10,13 @@ import type { Hono } from 'hono'
 import { createApp } from '#/server/app.js'
 import { SessionHub } from '#/server/hub.js'
 import { SessionRegistry } from '#/server/registry.js'
+import { fakeEngines, waitFor } from '../fixtures/fake-engine.js'
 
-interface SentFrame {
-  type: string
-  request_id: string
-  request: Record<string, unknown>
-}
-
-class FakeEngine extends EventEmitter {
-  sent: SentFrame[] = []
-  async start() {}
-  async stop() {}
-  send(frame: unknown) {
-    this.sent.push(frame as SentFrame)
-  }
+function setup() {
+  const { factory, engines } = fakeEngines()
+  const registry = new SessionRegistry({ hub: new SessionHub(), factory })
+  const app = createApp({ projectsRoot: mkdtempSync(join(tmpdir(), 'cc-web-eff-')), registry })
+  return { app, engines }
 }
 
 async function postJson(app: Hono, path: string, body: unknown) {
@@ -36,85 +28,33 @@ async function postJson(app: Hono, path: string, body: unknown) {
   return { status: res.status, body: await res.json() }
 }
 
-function respondOk(engine: FakeEngine, frame: SentFrame): void {
-  engine.emit('message', {
-    type: 'control_response',
-    response: { subtype: 'success', request_id: frame.request_id, response: {} },
-  })
-}
-
-async function waitFor(assertion: () => void): Promise<void> {
-  const deadline = Date.now() + 3000
-  for (;;) {
-    try {
-      assertion()
-      return
-    } catch (err) {
-      if (Date.now() > deadline) throw err
-      await new Promise((r) => setTimeout(r, 10))
-    }
-  }
-}
-
 describe('POST /api/v1/sessions/:id/effort', () => {
   it('发出 apply_flag_settings { effortLevel }', async () => {
-    const hub = new SessionHub()
-    const engines = new Map<string, FakeEngine>()
-    const registry = new SessionRegistry({
-      hub,
-      factory: (id) => {
-        const e = new FakeEngine()
-        engines.set(id, e)
-        return e
-      },
-    })
-    const app = createApp({ projectsRoot: mkdtempSync(join(tmpdir(), 'cc-web-eff-')), registry })
-
+    const { app, engines } = setup()
     const p = postJson(app, '/api/v1/sessions/s1/effort', { effort: 'max' })
-    await waitFor(() => expect(engines.get('s1')!.sent).toHaveLength(1))
-    const engine = engines.get('s1')!
-    respondOk(engine, engine.sent[0]!) // initialize 门控
-    await waitFor(() => expect(engine.sent).toHaveLength(2))
-    const req = engine.sent[1]!
-    expect(req.request.subtype).toBe('apply_flag_settings')
-    expect(req.request.settings).toEqual({ effortLevel: 'max' })
-    respondOk(engine, req)
+    await waitFor(() => expect(engines.get('s1')?.controls).toHaveLength(1))
+    const call = engines.get('s1')!.controls[0]!
+    expect(call.subtype).toBe('apply_flag_settings')
+    expect(call.payload).toEqual({ settings: { effortLevel: 'max' } })
+    call.resolve()
     expect((await p).body.code).toBe(0)
   })
 
   it('GET /settings 透传 get_settings payload（applied.effort 当默认值）', async () => {
-    const engines = new Map<string, FakeEngine>()
-    const registry = new SessionRegistry({
-      hub: new SessionHub(),
-      factory: (id) => {
-        const e = new FakeEngine()
-        engines.set(id, e)
-        return e
-      },
-    })
-    const app = createApp({ projectsRoot: mkdtempSync(join(tmpdir(), 'cc-web-set-')), registry })
+    const { app, engines } = setup()
     const p = app.request('/api/v1/sessions/s1/settings')
-    await waitFor(() => expect(engines.get('s1')!.sent).toHaveLength(1))
-    const engine = engines.get('s1')!
-    respondOk(engine, engine.sent[0]!) // initialize
-    await waitFor(() => expect(engine.sent).toHaveLength(2))
-    expect(engine.sent[1]!.request.subtype).toBe('get_settings')
-    engine.emit('message', {
-      type: 'control_response',
-      response: {
-        subtype: 'success',
-        request_id: engine.sent[1]!.request_id,
-        response: { applied: { effort: 'max', model: 'claude-opus-5[1m]' } },
-      },
-    })
+    await waitFor(() => expect(engines.get('s1')?.controls).toHaveLength(1))
+    const call = engines.get('s1')!.controls[0]!
+    expect(call.subtype).toBe('get_settings')
+    call.resolve({ applied: { effort: 'max', model: 'claude-opus-5[1m]' } })
     const body = (await (await p).json()) as { code: number; data: { applied: { effort: string } } }
     expect(body.code).toBe(0)
     expect(body.data.applied.effort).toBe('max')
   })
 
   it('缺 effort → 40001', async () => {
-    const registry = new SessionRegistry({ hub: new SessionHub(), factory: () => new FakeEngine() })
-    const app = createApp({ projectsRoot: mkdtempSync(join(tmpdir(), 'cc-web-eff-')), registry })
+    const { app, engines } = setup()
     expect((await postJson(app, '/api/v1/sessions/s1/effort', {})).body.code).toBe(40001)
+    expect(engines.size).toBe(0)
   })
 })

@@ -7,47 +7,24 @@
  * 返回 null + code 0，不是错误。
  */
 import { describe, it, expect } from 'vitest'
-import { EventEmitter } from 'node:events'
 import { fileURLToPath } from 'node:url'
 import type { Hono } from 'hono'
 import { createApp } from '#/server/app.js'
 import { SessionHub } from '#/server/hub.js'
 import type { HubEvent } from '#/server/hub.js'
 import { SessionRegistry } from '#/server/registry.js'
+import { fakeEngines, waitFor } from '../fixtures/fake-engine.js'
+import type { FakeEngine } from '../fixtures/fake-engine.js'
 
 const FIXTURES = fileURLToPath(new URL('../fixtures/sessions', import.meta.url))
 const SESSION_A = 'aaaaaaaa-0000-0000-0000-000000000001'
 
-interface SentFrame {
-  type: string
-  request_id: string
-  request: Record<string, unknown>
-}
-
-class FakeEngine extends EventEmitter {
-  pid = 4242
-  sent: SentFrame[] = []
-  async start() {}
-  async stop() {}
-  send(frame: unknown) {
-    this.sent.push(frame as SentFrame)
-  }
-}
-
-function setup(opts: { controlTimeoutMs?: number } = {}) {
+function setup() {
   const hub = new SessionHub()
   const events: HubEvent[] = []
   hub.subscribe('s1', (e) => events.push(e))
-  const engines = new Map<string, FakeEngine>()
-  const registry = new SessionRegistry({
-    hub,
-    factory: (id) => {
-      const e = new FakeEngine()
-      engines.set(id, e)
-      return e
-    },
-    ...(opts.controlTimeoutMs !== undefined ? { controlTimeoutMs: opts.controlTimeoutMs } : {}),
-  })
+  const { factory, engines } = fakeEngines()
+  const registry = new SessionRegistry({ hub, factory })
   const app = createApp({ projectsRoot: FIXTURES, registry })
   return { app, registry, engines, events }
 }
@@ -57,34 +34,12 @@ async function getJson(app: Hono, path: string) {
   return { status: res.status, body: await res.json() }
 }
 
-async function waitFor(assertion: () => void, timeoutMs = 3000): Promise<void> {
-  const deadline = Date.now() + timeoutMs
-  for (;;) {
-    try {
-      assertion()
-      return
-    } catch (err) {
-      if (Date.now() > deadline) throw err
-      await new Promise((r) => setTimeout(r, 10))
-    }
-  }
-}
-
-function respondOk(engine: FakeEngine, frame: SentFrame, response: unknown): void {
-  engine.emit('message', {
-    type: 'control_response',
-    response: { subtype: 'success', request_id: frame.request_id, response },
-  })
-}
-
-/** 驱动 initialize 门控，等到 get_usage 帧发出后返回它。 */
-async function driveGetUsage(engine: FakeEngine): Promise<SentFrame> {
-  await waitFor(() => expect(engine.sent).toHaveLength(1))
-  respondOk(engine, engine.sent[0]!, {})
-  await waitFor(() => expect(engine.sent).toHaveLength(2))
-  const req = engine.sent[1]!
-  expect(req.request.subtype).toBe('get_usage')
-  return req
+/** 等 get_usage 请求到达引擎 */
+async function pendingGetUsage(engine: FakeEngine) {
+  await waitFor(() => expect(engine.controls).toHaveLength(1))
+  const call = engine.controls[0]!
+  expect(call.subtype).toBe('get_usage')
+  return call
 }
 
 describe('GET /api/v1/sessions/:id/usage（引擎活着）', () => {
@@ -92,9 +47,7 @@ describe('GET /api/v1/sessions/:id/usage（引擎活着）', () => {
     const { app, registry, engines } = setup()
     await registry.ensure('s1')
     const p = getJson(app, '/api/v1/sessions/s1/usage')
-    const engine = engines.get('s1')!
-    const req = await driveGetUsage(engine)
-    respondOk(engine, req, {
+    ;(await pendingGetUsage(engines.get('s1')!)).resolve({
       session: {
         total_cost_usd: 1.23,
         total_lines_added: 42,
@@ -114,9 +67,7 @@ describe('GET /api/v1/sessions/:id/usage（引擎活着）', () => {
     const { app, registry, engines } = setup()
     await registry.ensure('s1')
     const p = getJson(app, '/api/v1/sessions/s1/usage')
-    const engine = engines.get('s1')!
-    const req = await driveGetUsage(engine)
-    respondOk(engine, req, {
+    ;(await pendingGetUsage(engines.get('s1')!)).resolve({
       session: { total_cost_usd: 0, model_usage: {}, brand_new_field: { nested: [1, 2] } },
     })
     const { body } = await p
@@ -130,9 +81,7 @@ describe('GET /api/v1/usage（订阅额度）', () => {
     const { app, registry, engines } = setup()
     await registry.ensure('s1')
     const p = getJson(app, '/api/v1/usage?session=s1')
-    const engine = engines.get('s1')!
-    const req = await driveGetUsage(engine)
-    respondOk(engine, req, {
+    ;(await pendingGetUsage(engines.get('s1')!)).resolve({
       session: { total_cost_usd: 0, model_usage: {} },
       rate_limits_available: true,
       rate_limits: {
@@ -151,9 +100,7 @@ describe('GET /api/v1/usage（订阅额度）', () => {
     const { app, registry, engines } = setup()
     await registry.ensure('s1')
     const p = getJson(app, '/api/v1/usage?session=s1')
-    const engine = engines.get('s1')!
-    const req = await driveGetUsage(engine)
-    respondOk(engine, req, {
+    ;(await pendingGetUsage(engines.get('s1')!)).resolve({
       session: { total_cost_usd: 0.5, model_usage: {} },
       subscription_type: null,
       rate_limits_available: false,
@@ -172,12 +119,11 @@ describe('GET /api/v1/usage（订阅额度）', () => {
     expect(engines.size).toBe(0) // 关键：查用量不许 spawn
   })
 
-  it('get_usage 超时 → 返回 null，不抛', async () => {
-    const { app, registry, engines } = setup({ controlTimeoutMs: 30 })
+  it('get_usage 超时（引擎 reject）→ 返回 null，不抛', async () => {
+    const { app, registry, engines } = setup()
     await registry.ensure('s1')
     const p = getJson(app, '/api/v1/usage?session=s1')
-    await waitFor(() => expect(engines.get('s1')!.sent.length).toBeGreaterThan(0))
-    // 谁也不应答：initialize 超时 → get_usage 拿不到 → null
+    ;(await pendingGetUsage(engines.get('s1')!)).reject('control request timed out: get_usage')
     const { body } = await p
     expect(body.code).toBe(0)
     expect(body.data).toBeNull()
@@ -188,7 +134,7 @@ describe('rate_limit_event 推送', () => {
   it('通过 WS 转给前端，status 原样保留（rejected 能区分出来）', async () => {
     const { registry, engines, events } = setup()
     await registry.ensure('s1')
-    engines.get('s1')!.emit('message', {
+    engines.get('s1')!.turnEvent({
       type: 'rate_limit_event',
       rate_limit_info: { status: 'rejected', rateLimitType: 'five_hour', utilization: 100 },
     })
@@ -212,10 +158,10 @@ describe('降级与隔离（D5）', () => {
   })
 
   it('用量拿不到时，/history 等接口不受影响', async () => {
-    const { app, registry, engines } = setup({ controlTimeoutMs: 30 })
+    const { app, registry, engines } = setup()
     await registry.ensure('s1')
     const usagePromise = getJson(app, '/api/v1/usage?session=s1')
-    await waitFor(() => expect(engines.get('s1')!.sent.length).toBeGreaterThan(0))
+    ;(await pendingGetUsage(engines.get('s1')!)).reject('engine exited while awaiting control_response')
     const usage = await usagePromise
     expect(usage.body.data).toBeNull()
     // 用量挂了，history 照常

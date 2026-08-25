@@ -6,7 +6,6 @@
  * 用「文件启动时不存在」的用例钉住。
  */
 import { describe, it, expect, afterEach } from 'vitest'
-import { EventEmitter } from 'node:events'
 import { fileURLToPath } from 'node:url'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -14,16 +13,10 @@ import { join } from 'node:path'
 import WebSocket from 'ws'
 import { createApp } from '#/server/app.js'
 import { startServer } from '#/server/bootstrap.js'
+import { FakeEngine } from '../fixtures/fake-engine.js'
 
 const FIXTURES = fileURLToPath(new URL('../fixtures/sessions', import.meta.url))
 const TOKEN = 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2'
-
-class FakeEngine extends EventEmitter {
-  pid = 4242
-  async start() {}
-  async stop() {}
-  send() {}
-}
 
 const cleanups: Array<() => Promise<void> | void> = []
 afterEach(async () => {

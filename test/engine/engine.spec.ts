@@ -1,14 +1,16 @@
 /**
- * M1：引擎生命周期 —— 构造注入 bin/args、start/stop、崩溃不静默。
+ * M1：引擎生命周期 —— 构造注入 bin/args、start/stop、崩溃不静默；
+ * D8：协议层走真进程（fake-claude 的 --auto-control / --echo-result）。
  *
  * 全部用假二进制（test/fixtures/fake-claude.mjs），不碰真实 claude。
  */
 import { describe, it, expect, vi } from 'vitest'
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { Engine } from '#/engine/engine.js'
+import { Engine } from '#/engine/index.js'
+import type { TurnEvent } from '#/engine/index.js'
 
 const FAKE = fileURLToPath(new URL('../fixtures/fake-claude.mjs', import.meta.url))
 const SCRIPT = fileURLToPath(new URL('../fixtures/recorded/.sample-turn.ndjson', import.meta.url))
@@ -32,16 +34,16 @@ function alive(pid: number): boolean {
 }
 
 describe('Engine 生命周期', () => {
-  it('start() 之后进程在跑，stdout 的 NDJSON 帧变成 message 事件', async () => {
+  it('start() 之后进程在跑，stdout 的 NDJSON 帧变成 turn-event', async () => {
     const engine = makeEngine()
-    const messages: unknown[] = []
-    engine.on('message', (m) => messages.push(m))
+    const events: TurnEvent[] = []
+    engine.on('turn-event', (m) => events.push(m))
     await engine.start()
     expect(engine.pid).toBeTypeOf('number')
     expect(alive(engine.pid!)).toBe(true)
     await new Promise<void>((r) => engine.on('exit', () => r()))
-    expect(messages).toHaveLength(3)
-    expect((messages[0] as { type: string }).type).toBe('system')
+    expect(events).toHaveLength(3)
+    expect(events[0]!.type).toBe('system')
   })
 
   it('stop() 之后进程没了', async () => {
@@ -89,11 +91,11 @@ describe('Engine 生命周期', () => {
         bin: process.execPath,
         args: [FAKE, '--script', script, '--split-bytes'],
       })
-      const messages: unknown[] = []
-      engine.on('message', (m) => messages.push(m))
+      const events: unknown[] = []
+      engine.on('turn-event', (m) => events.push(m))
       await engine.start()
       await new Promise<void>((r) => engine.on('exit', () => r()))
-      expect(messages).toEqual([frame])
+      expect(events).toEqual([frame])
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
@@ -106,7 +108,7 @@ describe('Engine 生命周期', () => {
     // 进程正在退出的窗口里连续写：任何一次都不许变成未处理的 stream error
     for (let i = 0; i < 30; i++) {
       try {
-        engine.send({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'x' }] } })
+        engine.prompt('x')
       } catch {
         break // 「engine is not running」是预期的失败方式
       }
@@ -123,5 +125,32 @@ describe('Engine 生命周期', () => {
     process.kill(-engine.pid!, 'SIGKILL')
     await exited
     await engine.stop(200) // 修复前：等不到已经发过的 close 事件，永久挂起
+  })
+})
+
+describe('协议层走真进程（D8）', () => {
+  it('control(list_models)：先握手再请求，--auto-control 的应答按 request_id 回到调用方', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cc-web-proto-'))
+    try {
+      const rec = join(dir, 'stdin.ndjson')
+      const engine = new Engine({ bin: process.execPath, args: [FAKE, '--hold', '--auto-control', '--record', rec] })
+      await engine.start()
+      const payload = (await engine.control('list_models')) as { models: { value: string }[] }
+      expect(payload.models[0]!.value).toBe('default')
+      await engine.stop()
+      const sent = readFileSync(rec, 'utf8').trim().split('\n').map((l) => JSON.parse(l) as { request: { subtype: string } })
+      expect(sent.map((f) => f.request.subtype)).toEqual(['initialize', 'list_models'])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('prompt 之后 --echo-result 回 result → turn-end', async () => {
+    const engine = new Engine({ bin: process.execPath, args: [FAKE, '--hold', '--echo-result'] })
+    await engine.start()
+    const end = new Promise<string>((r) => engine.once('turn-end', (result) => r(result.subtype)))
+    engine.prompt('hello')
+    await expect(end).resolves.toBe('success')
+    await engine.stop()
   })
 })

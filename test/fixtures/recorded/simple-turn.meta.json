@@ -1,6 +1,19 @@
 {
-  "claude_version": "2.1.243 (Claude Code)",
-  "recorded_at": "2026-08-25T02:07:56.881Z",
+  "claude_version": "2.1.241 (Claude Code)",
+  "recorded_at": "2026-08-25T10:17:48.819Z",
+  "args": [
+    "-p",
+    "--verbose",
+    "--input-format",
+    "stream-json",
+    "--output-format",
+    "stream-json",
+    "--include-partial-messages",
+    "--allow-dangerously-skip-permissions",
+    "--replay-user-messages",
+    "--session-id",
+    "89ed8048-0f3a-41b2-b87c-bd9000dc4eb5"
+  ],
   "sent": [
     "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Reply with exactly: hi\"}]}}"
   ]

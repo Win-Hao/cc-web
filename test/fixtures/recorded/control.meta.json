@@ -1,6 +1,19 @@
 {
-  "claude_version": "2.1.243 (Claude Code)",
-  "recorded_at": "2026-08-25T02:04:10.596Z",
+  "claude_version": "2.1.241 (Claude Code)",
+  "recorded_at": "2026-08-25T10:18:06.541Z",
+  "args": [
+    "-p",
+    "--verbose",
+    "--input-format",
+    "stream-json",
+    "--output-format",
+    "stream-json",
+    "--include-partial-messages",
+    "--allow-dangerously-skip-permissions",
+    "--replay-user-messages",
+    "--session-id",
+    "09f4ebd1-be5e-47ac-b7e2-67dbc160ff6a"
+  ],
   "sent": [
     "{\"type\":\"control_request\",\"request_id\":\"probe-0\",\"request\":{\"subtype\":\"initialize\"}}",
     "{\"type\":\"control_request\",\"request_id\":\"probe-1\",\"request\":{\"subtype\":\"list_models\"}}",

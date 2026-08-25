@@ -88,8 +88,8 @@ delta 不是），改为在 state 之后直发当前回合的快照（`seq: 0`�
 用户点了之后 POST 回 `/approvals/:requestId`。
 **用户不点，引擎就一直等**——所以要有超时（见 RISKS R2）。
 另外同一个 `requestId` 可能到达两次（`initialize` 的
-`pending_permission_requests` + 实时帧），**前端和服务器都要去重**，
-见 RISKS R5。
+`pending_permission_requests` + 实时帧），服务器在引擎层按 `requestId`
+去重（D8），**前端也要容忍重复**，见 RISKS R5。
 
 ## 端口
 

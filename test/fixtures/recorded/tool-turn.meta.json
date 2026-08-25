@@ -1,6 +1,19 @@
 {
-  "claude_version": "2.1.243 (Claude Code)",
-  "recorded_at": "2026-08-25T02:08:09.169Z",
+  "claude_version": "2.1.241 (Claude Code)",
+  "recorded_at": "2026-08-25T10:18:02.202Z",
+  "args": [
+    "-p",
+    "--verbose",
+    "--input-format",
+    "stream-json",
+    "--output-format",
+    "stream-json",
+    "--include-partial-messages",
+    "--allow-dangerously-skip-permissions",
+    "--replay-user-messages",
+    "--session-id",
+    "c7fc6a91-1aa7-4708-80cb-13791c2fa891"
+  ],
   "sent": [
     "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Use the Read tool to read the file hello.txt in the current directory, then reply with exactly its contents and nothing else.\"}]}}"
   ]

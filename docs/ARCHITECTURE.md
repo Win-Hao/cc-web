@@ -35,7 +35,7 @@
 
 ---
 
-## 七条决策
+## 八条决策
 
 ### D1：引擎用 headless CLI，不用 SDK 运行时
 
@@ -145,6 +145,40 @@ tool_use），用来：块开始时发 placeholder、tool_result 到了配对回
 - 事实来源仍是录制帧（D4），normalizer 的输出另配黄金文件
   `test/fixtures/recorded/*.events.json`——升级 CC 后 diff 它，
   能看到协议变化有没有穿透到浏览器。
+
+### D8：CC 协议只住在 `src/engine`
+
+`src/engine` 对外只有一个契约 `EngineLike`（`src/engine/types.ts`）：
+四个动作 `prompt(text, images)` / `interrupt()` / `control(subtype, payload)` /
+`answerApproval(requestId, decision)`，六种事件 `turn-event` / `turn-end` /
+`approval` / `approval-cancel` / `error` / `exit`。信封（`user` /
+`control_request` / `control_response`）、`request_id` 配对、`initialize`
+握手、`pending_permission_requests` 去重、`control_cancel_request`、fork 的
+新 id、CLI flag 组装和能力探测全在这个目录里；registry 只剩状态机和
+审批的超时策略。
+
+类型从 SDK 的 `.d.ts` 派生，不手写：`TurnEvent = SDKMessage`，`control()`
+的 subtype / payload 从 `SDKControlRequest` 推出——上游改名，`pnpm typecheck`
+先红（PROTOCOL §0）。
+
+**为什么**：分层图一直写着「只有 `src/engine` 知道 CC 的存在」，代码里
+却是反的：引擎是 bytes-in / JSON-out，信封散在 registry、cli 和 11 个
+spec 文件里，`send(frame: unknown)` 是一个没有不变量的接口。上游改一次
+协议要动 4 个 src 文件和 11 个 spec。收进来之后：改动面是一个目录；
+15 份手写 FakeEngine 变成一个 `test/fixtures/fake-engine.ts`；契约 probe
+驱动的是我们自己的 Engine——录到的 `sent` 就是引擎实际发出的帧，
+D4 这才算真的。
+
+**目录内的分层**：`process.ts`（spawn / NDJSON / 进程组杀，不认识任何帧）
+→ `engine.ts`（协议层；可注入假传输单测，不起进程）→ `factory.ts`
+（真 claude 的 flag 与 cwd）。
+
+**代价**：
+- `@anthropic-ai/claude-agent-sdk` 从「参考资料」变成 typecheck 的硬依赖
+  （仍只用类型，运行时不引入，D1 不变）；
+- 归一化层（`src/server/message`）仍要读帧里的字段——那是 D7 的
+  normalizer，帧形状变了它还是要改；但它吃的已是 `TurnEvent`，
+  不再见到控制帧。
 
 ---
 

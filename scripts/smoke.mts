@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { startServer } from '../src/server/bootstrap.js'
-import { Engine } from '../src/engine/engine.js'
+import { Engine } from '../src/engine/index.js'
 
 const fixtures = fileURLToPath(new URL('../test/fixtures/sessions', import.meta.url))
 const fakeClaude = fileURLToPath(new URL('../test/fixtures/fake-claude.mjs', import.meta.url))

@@ -7,12 +7,10 @@
  */
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { Engine } from '#/engine/engine.js'
-import { probeClaudeCapabilities } from '#/engine/capabilities.js'
-import type { ClaudeCapabilities } from '#/engine/capabilities.js'
+import { claudeEngineFactory } from '#/engine/index.js'
+import type { EngineFactory } from '#/engine/index.js'
 import { findSessionFile, readSessionCwd } from '#/sessions/find.js'
 import type { BootstrapDeps, BootResult } from './bootstrap.js'
-import type { EngineFactory } from './registry.js'
 
 export interface CliDeps {
   startServer: (deps: BootstrapDeps) => Promise<BootResult>
@@ -74,7 +72,15 @@ export async function run(argv: string[], deps: CliDeps): Promise<CliResult> {
   const args = parseArgs(argv)
   const projectsRoot = deps.projectsRoot ?? join(homedir(), '.claude', 'projects')
   const tokenPath = deps.tokenPath ?? join(homedir(), '.cc-web', 'server.token')
-  const factory = deps.factory ?? defaultFactory(projectsRoot)
+  // 真实 claude（D8）：协议和 flag 组装在 src/engine，这里只接会话 cwd 的来源
+  const factory =
+    deps.factory ??
+    claudeEngineFactory({
+      resolveCwd: async (sessionId) => {
+        const file = await findSessionFile(projectsRoot, sessionId)
+        return file === null ? null : readSessionCwd(file)
+      },
+    })
 
   const boot = await deps.startServer({
     projectsRoot,
@@ -86,68 +92,4 @@ export async function run(argv: string[], deps: CliDeps): Promise<CliResult> {
   const url = sessionUrl(boot.url, args.resume)
   if (!args.noOpen) deps.open(url)
   return { url, close: boot.close }
-}
-
-/**
- * 按探测到的能力组装引擎参数（M39）：老版本 CLI 没有的 flag 不传，
- * 避免 "unknown option" exit 1 杀死会话。
- * - --include-partial-messages：没有则退化为无打字机效果
- * - --allow-dangerously-skip-permissions：把 bypass 变成可切换选项
- *   （2.1.241 实测；没有则 UI 切 bypass 会被引擎拒绝并回滚，功能不损）
- * - --session-id：新建会话必需，没有就明确报错
- */
-export function buildEngineArgs(
-  caps: ClaudeCapabilities,
-  opts: { resume?: string; newSessionId?: string; fork?: boolean },
-): string[] {
-  const args = ['-p', '--verbose', '--input-format', 'stream-json', '--output-format', 'stream-json']
-  if (caps.partialMessages) args.push('--include-partial-messages')
-  if (caps.allowDangerousSkip) args.push('--allow-dangerously-skip-permissions')
-  if (caps.replayUserMessages) args.push('--replay-user-messages') // D7：user 帧回显带 uuid
-  if (opts.newSessionId !== undefined) {
-    if (!caps.sessionId) {
-      throw new Error('claude CLI is too old for new sessions (missing --session-id); please upgrade')
-    }
-    args.push('--session-id', opts.newSessionId)
-  } else if (opts.resume !== undefined) {
-    args.push('--resume', opts.resume)
-    if (opts.fork === true) args.push('--fork-session') // M55：分叉，新 id 由 CC 发
-  }
-  return args
-}
-
-/**
- * 默认引擎工厂：真实 claude。
- * - 已有会话：--resume，cwd 设成会话原 cwd（D3，从 jsonl 行里读）
- * - 新建会话（opts.newSessionCwd）：--session-id 指定服务器发的 uuid，
- *   cwd 用调用方给的目录 —— CC 会在首条消息时落盘对应 jsonl
- */
-function defaultFactory(projectsRoot: string): EngineFactory {
-  return async (sessionId, opts) => {
-    const caps = await probeClaudeCapabilities('claude') // 进程内只探测一次
-    if (opts?.forkFrom !== undefined) {
-      // 分叉（M55）：resume 旧会话 + --fork-session，cwd 沿用旧会话的
-      const file = await findSessionFile(projectsRoot, opts.forkFrom)
-      const cwd = file !== null ? await readSessionCwd(file) : null
-      return new Engine({
-        bin: 'claude',
-        args: buildEngineArgs(caps, { resume: opts.forkFrom, fork: true }),
-        ...(cwd !== null ? { cwd } : {}),
-      })
-    }
-    if (opts?.newSessionCwd !== undefined) {
-      return new Engine({
-        bin: 'claude',
-        args: buildEngineArgs(caps, { newSessionId: sessionId }),
-        cwd: opts.newSessionCwd,
-      })
-    }
-    const file = await findSessionFile(projectsRoot, sessionId)
-    const cwd = file !== null ? await readSessionCwd(file) : null
-    return new Engine({
-      bin: 'claude',
-      args: buildEngineArgs(caps, { resume: sessionId }),
-      ...(cwd !== null ? { cwd } : {}),
-    })
-  }
 }

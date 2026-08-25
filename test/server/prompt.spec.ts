@@ -2,31 +2,21 @@
  * M5：发提示词 + 中断。
  *
  * stdin 断言用**真 Engine + 假 claude 二进制**（--record 落盘），
- * 状态机断言用 FakeEngine（EventEmitter 桩）—— 各测各的层。
+ * 状态机断言用 FakeEngine —— 各测各的层。
  */
 import { describe, it, expect, afterEach } from 'vitest'
-import { EventEmitter } from 'node:events'
 import { fileURLToPath } from 'node:url'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Hono } from 'hono'
-import { Engine } from '#/engine/engine.js'
+import { Engine } from '#/engine/index.js'
 import { createApp } from '#/server/app.js'
 import { SessionHub } from '#/server/hub.js'
 import { SessionRegistry } from '#/server/registry.js'
+import { fakeEngines, waitFor } from '../fixtures/fake-engine.js'
 
 const FAKE = fileURLToPath(new URL('../fixtures/fake-claude.mjs', import.meta.url))
-
-class FakeEngine extends EventEmitter {
-  pid = 4242
-  sent: unknown[] = []
-  async start() {}
-  async stop() {}
-  send(frame: unknown) {
-    this.sent.push(frame)
-  }
-}
 
 const tmpdirs: string[] = []
 afterEach(() => {
@@ -45,21 +35,14 @@ async function setupReal() {
       new Engine({ bin: process.execPath, args: [FAKE, '--hold', '--record', recPath] }),
   })
   const app = createApp({ projectsRoot: dir, registry })
-  return { app, registry, recPath }
+  return { app, registry, recPath, dir }
 }
 
 /** FakeEngine：直接驱动状态机 */
 function setupFake() {
   const hub = new SessionHub()
-  const engines = new Map<string, FakeEngine>()
-  const registry = new SessionRegistry({
-    hub,
-    factory: (id) => {
-      const e = new FakeEngine()
-      engines.set(id, e)
-      return e
-    },
-  })
+  const { factory, engines } = fakeEngines()
+  const registry = new SessionRegistry({ hub, factory })
   const dir = mkdtempSync(join(tmpdir(), 'cc-web-prompt-'))
   tmpdirs.push(dir)
   const app = createApp({ projectsRoot: dir, registry })
@@ -73,19 +56,6 @@ async function postJson(app: Hono, path: string, body: unknown) {
     body: JSON.stringify(body),
   })
   return { status: res.status, body: await res.json() }
-}
-
-async function waitFor(assertion: () => void, timeoutMs = 3000): Promise<void> {
-  const deadline = Date.now() + timeoutMs
-  for (;;) {
-    try {
-      assertion()
-      return
-    } catch (err) {
-      if (Date.now() > deadline) throw err
-      await new Promise((r) => setTimeout(r, 20))
-    }
-  }
 }
 
 describe('POST /api/v1/sessions/:id/prompt', () => {
@@ -162,7 +132,7 @@ describe('POST /api/v1/sessions/:id/prompt', () => {
       postJson(app, '/api/v1/sessions/s1/prompt', { text: 'two' }),
     ])
     expect(results.filter((r) => r.body.code === 0)).toHaveLength(1)
-    expect(engines.get('s1')!.sent).toHaveLength(1)
+    expect(engines.get('s1')!.prompts).toHaveLength(1)
   })
 
   it('运行中再发 prompt → 拒绝（R7：串行化，先拒绝）', async () => {
@@ -173,20 +143,20 @@ describe('POST /api/v1/sessions/:id/prompt', () => {
     expect(second.body.code).not.toBe(0)
   })
 
-  it('result 帧到达后状态回 idle，可以再发 prompt', async () => {
+  it('回合结束（turn-end）后状态回 idle，可以再发 prompt', async () => {
     const { app, engines } = setupFake()
     await postJson(app, '/api/v1/sessions/s1/prompt', { text: 'one' })
-    engines.get('s1')!.emit('message', { type: 'result', subtype: 'success' })
+    engines.get('s1')!.turnEnd()
     const again = await postJson(app, '/api/v1/sessions/s1/prompt', { text: 'two' })
     expect(again.body.code).toBe(0)
-    expect(engines.get('s1')!.sent).toHaveLength(2)
+    expect(engines.get('s1')!.prompts.map((p) => p.text)).toEqual(['one', 'two'])
   })
 
   it('引擎退出后状态回 idle，下次 prompt 重新 spawn', async () => {
     const { app, registry, engines } = setupFake()
     await postJson(app, '/api/v1/sessions/s1/prompt', { text: 'one' })
     const first = engines.get('s1')!
-    first.emit('exit', 1, null)
+    first.exit(1)
     expect(registry.state('s1')).toBe('idle')
     const again = await postJson(app, '/api/v1/sessions/s1/prompt', { text: 'two' })
     expect(again.body.code).toBe(0)
@@ -214,27 +184,20 @@ describe('POST /api/v1/sessions/:id/interrupt', () => {
     expect(engines.has('never')).toBe(false) // 不该为它拉起引擎
   })
 
-  it('会话 idle（没在跑）→ 不报错，不发 interrupt 帧', async () => {
+  it('会话 idle（没在跑）→ 不报错，不发 interrupt', async () => {
     const { app, engines } = setupFake()
     await postJson(app, '/api/v1/sessions/s1/prompt', { text: 'one' })
-    engines.get('s1')!.emit('message', { type: 'result', subtype: 'success' })
+    engines.get('s1')!.turnEnd()
     const { body } = await postJson(app, '/api/v1/sessions/s1/interrupt', {})
     expect(body.code).toBe(0)
-    expect(
-      engines.get('s1')!.sent.filter(
-        (f) => (f as { type?: string }).type === 'control_request',
-      ),
-    ).toHaveLength(0)
+    expect(engines.get('s1')!.interrupts).toBe(0)
   })
 })
 
 describe('GET /api/v1/sessions 的 state 字段（M54 侧栏运行指示）', () => {
   it('running 会话在列表里被标出，其它是 idle', async () => {
-    const { app, recPath } = await setupReal()
+    const { app, dir } = await setupReal()
     // setupReal 的 projectsRoot 是空 tmpdir —— 铺一个会话文件让列表能看见它
-    const dir = recPath.replace(/stdin\.ndjson$/, '')
-    const { mkdirSync, writeFileSync } = await import('node:fs')
-    const { join } = await import('node:path')
     mkdirSync(join(dir, '-tmp-proj'), { recursive: true })
     writeFileSync(
       join(dir, '-tmp-proj', 's1.jsonl'),

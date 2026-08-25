@@ -9,7 +9,7 @@ import { join } from 'node:path'
 import {
   BASELINE_CAPABILITIES, parseHelpCapabilities, probeClaudeCapabilities, resetCapabilityProbe,
 } from '#/engine/capabilities.js'
-import { buildEngineArgs } from '#/server/cli.js'
+import { buildEngineArgs } from '#/engine/factory.js'
 
 const MODERN_HELP = `
 Usage: claude -p [options]

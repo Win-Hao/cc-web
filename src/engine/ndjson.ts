@@ -12,6 +12,8 @@
 export interface NdjsonParserHandlers {
   onMessage: (msg: unknown) => void
   onError: (err: Error, rawLine: string) => void
+  /** 每个非空行解析前的原文（契约测试录音用，D4） */
+  onLine?: (rawLine: string) => void
 }
 
 export class NdjsonParser {
@@ -42,6 +44,7 @@ export class NdjsonParser {
 
   private handleLine(line: string): void {
     if (line.trim() === '') return
+    this.handlers.onLine?.(line)
     try {
       this.handlers.onMessage(JSON.parse(line))
     } catch (err) {

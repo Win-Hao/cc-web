@@ -6,7 +6,7 @@
  */
 import { describe, it, expect, vi } from 'vitest'
 import { fileURLToPath } from 'node:url'
-import { Engine } from '#/engine/engine.js'
+import { Engine } from '#/engine/index.js'
 
 const FAKE = fileURLToPath(new URL('../fixtures/fake-claude.mjs', import.meta.url))
 
@@ -26,7 +26,7 @@ describe('Engine 进程组', () => {
       args: [FAKE, '--spawn-sleeper', '--hold'],
     })
     let sleeperPid: number | null = null
-    engine.on('message', (m) => {
+    engine.on('turn-event', (m) => {
       const msg = m as { type?: string; pid?: number }
       if (msg.type === 'fake-claude.sleeper') sleeperPid = msg.pid!
     })

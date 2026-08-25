@@ -3,52 +3,24 @@
  * 没有活引擎 → null 且绝不 spawn（和 /usage 的守卫同款）。
  */
 import { describe, it, expect } from 'vitest'
-import { EventEmitter } from 'node:events'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createApp } from '#/server/app.js'
 import { SessionHub } from '#/server/hub.js'
 import { SessionRegistry } from '#/server/registry.js'
-
-interface SentFrame {
-  type: string
-  request_id: string
-  request: Record<string, unknown>
-}
-
-class FakeEngine extends EventEmitter {
-  sent: SentFrame[] = []
-  async start() {}
-  async stop() {}
-  send(frame: unknown) {
-    const f = frame as SentFrame
-    this.sent.push(f)
-    const respond = (response: unknown) =>
-      this.emit('message', {
-        type: 'control_response',
-        response: { subtype: 'success', request_id: f.request_id, response },
-      })
-    if (f.request.subtype === 'initialize') setImmediate(() => respond({}))
-    if (f.request.subtype === 'get_context_usage')
-      setImmediate(() => respond({ totalTokens: 201000, maxTokens: 1000000, percentage: 20, categories: [] }))
-    if (f.request.subtype === 'list_models') setImmediate(() => respond({ models: [] }))
-    if (f.request.subtype === 'get_usage')
-      setImmediate(() => respond({ session: {}, rate_limits_available: true, rate_limits: {} }))
-    if (f.request.subtype === 'get_settings') setImmediate(() => respond({ applied: {} }))
-  }
-}
+import { fakeEngines } from '../fixtures/fake-engine.js'
 
 function setup() {
-  const engines = new Map<string, FakeEngine>()
-  const registry = new SessionRegistry({
-    hub: new SessionHub(),
-    factory: (id) => {
-      const e = new FakeEngine()
-      engines.set(id, e)
-      return e
+  const { factory, engines } = fakeEngines({
+    auto: {
+      get_context_usage: { totalTokens: 201000, maxTokens: 1000000, percentage: 20, categories: [] },
+      list_models: { models: [] },
+      get_usage: { session: {}, rate_limits_available: true, rate_limits: {} },
+      get_settings: { applied: {} },
     },
   })
+  const registry = new SessionRegistry({ hub: new SessionHub(), factory })
   const root = mkdtempSync(join(tmpdir(), 'cc-web-ctx-'))
   const app = createApp({ projectsRoot: root, registry })
   return { app, registry, engines, root }
@@ -67,13 +39,14 @@ describe('GET /api/v1/sessions/:id/context', () => {
   })
 
   it('没有活引擎且没有 jsonl → null，不为会话 spawn 引擎', async () => {
-    const { app } = setup()
+    const { app, engines } = setup()
     const body = (await (await app.request('/api/v1/sessions/s1/context')).json()) as {
       code: number
       data: unknown
     }
     expect(body.code).toBe(0)
     expect(body.data).toBeNull()
+    expect(engines.has('s1')).toBe(false)
   })
 
   it('引擎不在但有 jsonl → 末轮 usage 估算，窗口取元数据引擎的 maxTokens（M31）', async () => {
